@@ -42,7 +42,6 @@ import { fetchChatbotRuntimeState } from '@/lib/chatbot-flows-api';
 import { resolveConversationAttendanceBucket } from '@/lib/attendance-buckets';
 import {
   CHATBOT_RUNTIME_REFRESH_INTERVAL_MS,
-  CONVERSATION_REFRESH_INTERVAL_MS,
   CONVERSATION_SUMMARY_LIMIT,
   CUSTOMER_CACHE_REFRESH_INTERVAL_MS,
   PRESENCE_REFRESH_INTERVAL_MS,
@@ -50,7 +49,10 @@ import {
   SERVICES_REFRESH_INTERVAL_MS,
 } from '@/lib/performance-config';
 import { fetchLocalUsers } from '@/lib/users-api';
-import { fetchWhatsappConversationDetail, fetchWhatsappConversations } from '@/lib/whatsapp-api';
+import { fetchWhatsappConversationDetail } from '@/lib/whatsapp-api';
+import { useConversationSummaries } from '@/features/chat/hooks/useConversations';
+import { useChatEvents } from '@/features/chat/hooks/useChatEvents';
+import { useChatStore } from '@/features/chat/store/useChatStore';
 
 const getPreferenceTime = (value) => Date.parse(String(value || '')) || 0;
 const getConversationTime = (conversation) =>
@@ -130,12 +132,25 @@ export default function Attendance() {
   const { effectiveUser } = useAuth();
   const queryClient = useQueryClient();
   const location = useLocation();
-  const [selectedConversation, setSelectedConversation] = useState(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [primaryFilter, setPrimaryFilter] = useState('all');
-  const [serviceFilter, setServiceFilter] = useState('all');
-  const [labelFilter, setLabelFilter] = useState('all');
-  const [showContactInfo, setShowContactInfo] = useState(false);
+  const selectedConversation = useChatStore((state) => state.selectedConversation);
+  const setSelectedConversation = useChatStore((state) => state.setSelectedConversation);
+  const searchTerm = useChatStore((state) => state.filters.searchTerm);
+  const primaryFilter = useChatStore((state) => state.filters.primary);
+  const serviceFilter = useChatStore((state) => state.filters.service);
+  const labelFilter = useChatStore((state) => state.filters.label);
+  const sidePanel = useChatStore((state) => state.sidePanel);
+  const setFilter = useChatStore((state) => state.setFilter);
+  const setSidePanel = useChatStore((state) => state.setSidePanel);
+  const setSearchTerm = (value) => setFilter('searchTerm', value);
+  const setPrimaryFilter = (value) => setFilter('primary', value);
+  const setServiceFilter = (value) => setFilter('service', value);
+  const setLabelFilter = (value) => setFilter('label', value);
+  const showContactInfo = sidePanel === 'contact';
+  const setShowContactInfo = (update) => setSidePanel((currentPanel) => {
+    const currentValue = currentPanel === 'contact';
+    const nextValue = typeof update === 'function' ? update(currentValue) : update;
+    return nextValue ? 'contact' : null;
+  });
   const [startConversationOpen, setStartConversationOpen] = useState(false);
   const [startConversationPhone, setStartConversationPhone] = useState('');
   const [cachedConversations, setCachedConversations] = useState([]);
@@ -152,12 +167,9 @@ export default function Attendance() {
     isFetched,
     isError,
     error,
-  } = useQuery({
-    queryKey: ['conversations', 'attendance', 'summary', CONVERSATION_SUMMARY_LIMIT],
-    queryFn: () => fetchWhatsappConversations({ summary: true, limit: CONVERSATION_SUMMARY_LIMIT }),
-    refetchInterval: CONVERSATION_REFRESH_INTERVAL_MS,
-    staleTime: 10000,
-  });
+  } = useConversationSummaries({ limit: CONVERSATION_SUMMARY_LIMIT });
+
+  useChatEvents({ selectedConversationId: selectedConversation?.id });
 
   const { data: customersResponse } = useQuery({
     queryKey: ['persisted-customers', 'all'],

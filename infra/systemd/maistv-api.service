@@ -1,0 +1,29 @@
+[Unit]
+Description=MaisTV chat API
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/SaasTV
+Environment=NODE_ENV=production
+Environment=PORT=5053
+Environment=MAISTV_RUNTIME_ROLE=chat-api
+EnvironmentFile=-/root/SaasTV/.env
+EnvironmentFile=/etc/maistv/chat-stack.env
+ExecStart=/usr/bin/node server/local-api.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=maistv-api
+
+[Install]
+WantedBy=multi-user.target

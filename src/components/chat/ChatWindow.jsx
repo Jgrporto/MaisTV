@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -35,7 +35,7 @@ import {
 import {
   fetchWhatsappHistoryMessages,
   fetchWhatsappAudioTranscription,
-  fetchWhatsappMessages,
+  fetchWhatsappMessages as fetchLegacyWhatsappMessages,
   normalizeWhatsappMessage,
   markWhatsappConversationsRead,
   reactToWhatsappMessage,
@@ -72,10 +72,14 @@ import TicketSidePanel from './TicketSidePanel';
 import TicketStatusBadge from './TicketStatusBadge';
 import LabelBadge from '@/components/labels/LabelBadge';
 import { listConversationTickets } from '@/lib/tickets-api';
+import VirtualizedMessageThread from '@/features/chat/components/VirtualizedMessageThread';
+import { ENABLE_CHAT_VIRTUALIZATION, ENABLE_NEW_CHAT_DATA_LAYER, MESSAGE_PAGE_LIMIT } from '@/lib/performance-config';
+import { useChatStore } from '@/features/chat/store/useChatStore';
+import { flattenMessagePages, useMessages } from '@/features/chat/hooks/useMessages';
 
-const INITIAL_MESSAGE_PAGE_SIZE = 60;
-const OLDER_MESSAGE_PAGE_SIZE = 80;
-const RECENT_MESSAGE_POLL_TAIL_SIZE = 80;
+const INITIAL_MESSAGE_PAGE_SIZE = MESSAGE_PAGE_LIMIT;
+const OLDER_MESSAGE_PAGE_SIZE = MESSAGE_PAGE_LIMIT;
+const RECENT_MESSAGE_POLL_TAIL_SIZE = MESSAGE_PAGE_LIMIT;
 const NEWER_MESSAGES_POLL_INTERVAL_MS = 120000;
 const HIDDEN_TAB_MESSAGES_POLL_INTERVAL_MS = 300000;
 const OUTGOING_RECONCILE_WINDOW_MS = 2 * 60 * 1000;
@@ -979,9 +983,19 @@ export default function ChatWindow({
   const [transferUserId, setTransferUserId] = useState('');
   const [transferServiceId, setTransferServiceId] = useState('');
   const [isTransferringConversation, setIsTransferringConversation] = useState(false);
-  const [quickReplyPanelOpen, setQuickReplyPanelOpen] = useState(false);
-  const [tavinhoPanelOpen, setTavinhoPanelOpen] = useState(false);
-  const [ticketPanelOpen, setTicketPanelOpen] = useState(false);
+  const chatSidePanel = useChatStore((state) => state.sidePanel);
+  const setChatSidePanel = useChatStore((state) => state.setSidePanel);
+  const quickReplyPanelOpen = chatSidePanel === 'quick-replies';
+  const tavinhoPanelOpen = chatSidePanel === 'tavinho';
+  const ticketPanelOpen = chatSidePanel === 'ticket';
+  const buildPanelSetter = (panelName) => (update) => setChatSidePanel((currentPanel) => {
+    const currentValue = currentPanel === panelName;
+    const nextValue = typeof update === 'function' ? update(currentValue) : update;
+    return nextValue ? panelName : (currentValue ? null : currentPanel);
+  });
+  const setQuickReplyPanelOpen = buildPanelSetter('quick-replies');
+  const setTavinhoPanelOpen = buildPanelSetter('tavinho');
+  const setTicketPanelOpen = buildPanelSetter('ticket');
   const [transcribingMessageIds, setTranscribingMessageIds] = useState(() => new Set());
   const messagesEndRef = useRef(null);
   const scrollContainerRef = useRef(null);
@@ -994,6 +1008,8 @@ export default function ChatWindow({
   const retryPayloadsRef = useRef(new Map());
   const nextOutgoingOrderRef = useRef(1);
   const queryClient = useQueryClient();
+  const paginatedMessagesQuery = useMessages(conversation, { enabled: ENABLE_NEW_CHAT_DATA_LAYER });
+  const paginatedHasMoreRef = useRef(true);
   const currentUserId = String(currentUser?.id || currentUser?.email || '').trim();
   const currentUserName = String(currentUser?.full_name || currentUser?.name || currentUser?.username || 'Agente').trim();
   const isCurrentUserAdmin =
@@ -1179,6 +1195,22 @@ export default function ChatWindow({
     [conversation?.source_accounts]
   );
 
+  const fetchRecentMessagePage = useCallback(async (limit = INITIAL_MESSAGE_PAGE_SIZE) => {
+    if (!ENABLE_NEW_CHAT_DATA_LAYER) {
+      return fetchLegacyWhatsappMessages(conversation.id, {
+        tail: limit,
+        markRead: true,
+        conversationIds: conversation.source_conversation_ids,
+        sourceAccounts: conversation.source_accounts,
+      });
+    }
+    const result = await paginatedMessagesQuery.refetch();
+    if (result.error) throw result.error;
+    const pages = Array.isArray(result.data?.pages) ? result.data.pages : [];
+    paginatedHasMoreRef.current = Boolean(pages.at(-1)?.hasMore);
+    return flattenMessagePages(result.data).slice(-limit);
+  }, [conversation?.id, sourceAccountsKey, sourceConversationIdsKey, paginatedMessagesQuery.refetch]);
+
   const isWithin24hWindow = Boolean(conversation?.is_within_customer_window);
   const windowStatusLabel = isWithin24hWindow
     ? 'Janela de 24h ativa. Texto livre liberado.'
@@ -1352,12 +1384,7 @@ export default function ChatWindow({
 
       try {
         const [recentMessages, chatbotEvents] = await Promise.all([
-          fetchWhatsappMessages(conversationId, {
-            tail: INITIAL_MESSAGE_PAGE_SIZE,
-            markRead: true,
-            conversationIds: conversation.source_conversation_ids,
-            sourceAccounts: conversation.source_accounts,
-          }),
+          fetchRecentMessagePage(INITIAL_MESSAGE_PAGE_SIZE),
           fetchChatbotEvents(conversationId).catch(() => []),
         ]);
 
@@ -1370,7 +1397,7 @@ export default function ChatWindow({
           return mergedMessages;
         });
         setHasOlderMessages(
-          recentMessages.length >= INITIAL_MESSAGE_PAGE_SIZE ||
+          (ENABLE_NEW_CHAT_DATA_LAYER ? paginatedHasMoreRef.current : recentMessages.length >= INITIAL_MESSAGE_PAGE_SIZE) ||
             visibleRecentMessages.length < recentMessages.length,
         );
       } catch (error) {
@@ -1392,7 +1419,7 @@ export default function ChatWindow({
     return () => {
       active = false;
     };
-  }, [conversation?.id, sourceConversationIdsKey, sourceAccountsKey]);
+  }, [conversation?.id, sourceConversationIdsKey, sourceAccountsKey, fetchRecentMessagePage]);
 
   useEffect(() => {
     if (!conversation?.id) return;
@@ -1425,11 +1452,7 @@ export default function ChatWindow({
 
       try {
         const [recentMessages, chatbotEvents] = await Promise.all([
-          fetchWhatsappMessages(conversation.id, {
-            tail: RECENT_MESSAGE_POLL_TAIL_SIZE,
-            conversationIds: conversation.source_conversation_ids,
-            sourceAccounts: conversation.source_accounts,
-          }),
+          fetchRecentMessagePage(RECENT_MESSAGE_POLL_TAIL_SIZE),
           fetchChatbotEvents(conversation.id).catch(() => []),
         ]);
 
@@ -1479,7 +1502,7 @@ export default function ChatWindow({
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', pollImmediately);
     };
-  }, [conversation?.id, queryClient, sourceConversationIdsKey, sourceAccountsKey]);
+  }, [conversation?.id, queryClient, sourceConversationIdsKey, sourceAccountsKey, fetchRecentMessagePage]);
 
   useEffect(() => {
     if (!conversation?.id || messages.length === 0) return;
@@ -1523,11 +1546,7 @@ export default function ChatWindow({
     if (!conversation?.id) return;
 
     const [recentMessages, chatbotEvents] = await Promise.all([
-      fetchWhatsappMessages(conversation.id, {
-        tail: INITIAL_MESSAGE_PAGE_SIZE,
-        conversationIds: conversation.source_conversation_ids,
-        sourceAccounts: conversation.source_accounts,
-      }).catch(() => []),
+      fetchRecentMessagePage(INITIAL_MESSAGE_PAGE_SIZE).catch(() => []),
       fetchChatbotEvents(conversation.id).catch(() => []),
     ]);
 
@@ -1699,12 +1718,25 @@ export default function ChatWindow({
     setIsLoadingOlder(true);
 
     try {
-      const olderMessages = await fetchWhatsappMessages(conversation.id, {
-        tail: OLDER_MESSAGE_PAGE_SIZE,
-        until: oldestTimestamp,
-        conversationIds: conversation.source_conversation_ids,
-        sourceAccounts: conversation.source_accounts,
-      });
+      let olderMessages;
+      let hasMoreAfterPage;
+      if (ENABLE_NEW_CHAT_DATA_LAYER) {
+        const previousPageCount = paginatedMessagesQuery.data?.pages?.length || 0;
+        const result = await paginatedMessagesQuery.fetchNextPage();
+        if (result.error) throw result.error;
+        const pages = Array.isArray(result.data?.pages) ? result.data.pages : [];
+        const appendedPage = pages[previousPageCount] || null;
+        olderMessages = Array.isArray(appendedPage?.items) ? appendedPage.items : [];
+        hasMoreAfterPage = Boolean(result.hasNextPage);
+      } else {
+        olderMessages = await fetchLegacyWhatsappMessages(conversation.id, {
+          tail: OLDER_MESSAGE_PAGE_SIZE,
+          until: oldestTimestamp,
+          conversationIds: conversation.source_conversation_ids,
+          sourceAccounts: conversation.source_accounts,
+        });
+        hasMoreAfterPage = olderMessages.length >= OLDER_MESSAGE_PAGE_SIZE;
+      }
 
       if (olderMessages.length === 0) {
         setHasOlderMessages(false);
@@ -1715,7 +1747,7 @@ export default function ChatWindow({
       }
 
       setMessages((currentMessages) => mergeMessages(currentMessages, olderMessages));
-      setHasOlderMessages(olderMessages.length >= OLDER_MESSAGE_PAGE_SIZE);
+      setHasOlderMessages(hasMoreAfterPage);
 
       requestAnimationFrame(() => {
         const nextContainer = scrollContainerRef.current;
@@ -2867,6 +2899,44 @@ export default function ChatWindow({
   const grouped = groupMessagesByDate(filteredMessages);
   const visibleLabels = Array.isArray(conversation?.visible_labels) ? conversation.visible_labels : [];
 
+  const renderThreadItem = (item, index) => {
+    if (item.type === 'separator') {
+      return (
+        <div key={`sep-${item.label}-${index}`} className="flex justify-center py-3">
+          <span className="text-[11px] text-muted-foreground bg-muted/80 px-3 py-1 rounded-full shadow-sm">
+            {item.label}
+          </span>
+        </div>
+      );
+    }
+
+    return (
+      <ChatMessage
+        key={
+          item.data.client_message_id ||
+          item.data.provider_message_id ||
+          item.data.server_message_id ||
+          item.data.id
+        }
+        message={item.data}
+        contactAvatarUrl={conversation.avatar_url}
+        contactName={conversation.contact_name}
+        currentUserName={currentUserName}
+        onReply={(message) => setReplyTo(message)}
+        onReact={(message, emoji) => void handleReact(message, emoji)}
+        onRetry={handleRetryMessage}
+        onInfo={handleMessageInfo}
+        onTranscribeAudio={(message) => void handleTranscribeAudio(message)}
+        isTranscribingAudio={transcribingMessageIds.has(resolveIncomingMessageIdentifier(item.data))}
+        onOpenMedia={(mediaItem) => {
+          setLightboxActiveId(mediaItem.id);
+          setIsLightboxOpen(true);
+        }}
+        onStartConversation={(phone) => onOpenStartConversation?.(phone)}
+      />
+    );
+  };
+
   if (!conversation) {
     return (
       <div className="chat-app-shell flex-1 flex items-center justify-center bg-muted/20">
@@ -3053,6 +3123,36 @@ export default function ChatWindow({
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div className="relative h-full min-w-0 flex-1 transition-[flex-basis,width] duration-200 ease-out">
+          {ENABLE_CHAT_VIRTUALIZATION && grouped.length > 0 ? (
+            <VirtualizedMessageThread
+              items={grouped}
+              renderItem={renderThreadItem}
+              onLoadOlder={handleLoadMoreMessages}
+              hasOlderMessages={hasOlderMessages || hasHistoryMessages}
+              isLoadingOlder={isLoadingOlder || isLoadingHistory}
+              scrollerRef={(element) => {
+                scrollContainerRef.current = element;
+              }}
+              stickToBottomRef={stickToBottomRef}
+              className="chat-thread-surface attendance-scrollbar relative z-0 h-full px-4 pt-4 space-y-0.5"
+              style={{
+                background:
+                  'radial-gradient(circle at top left, hsl(var(--primary) / 0.12) 0%, transparent 36%), linear-gradient(180deg, hsl(var(--wa-background)) 0%, hsl(var(--background)) 100%)',
+              }}
+              topContent={(hasOlderMessages || hasHistoryMessages) ? (
+                <div className="flex justify-center py-3">
+                  <button
+                    type="button"
+                    onClick={() => void handleLoadMoreMessages()}
+                    disabled={isLoadingOlder || isLoadingHistory}
+                    className="text-[11px] text-muted-foreground bg-muted/80 px-3 py-1 rounded-full shadow-sm transition hover:bg-muted disabled:cursor-wait disabled:opacity-70"
+                  >
+                    {isLoadingOlder || isLoadingHistory ? 'Carregando historico...' : 'Ver Mais'}
+                  </button>
+                </div>
+              ) : null}
+            />
+          ) : (
           <div
           ref={scrollContainerRef}
           data-chat-overlay-boundary="true"
@@ -3094,46 +3194,11 @@ export default function ChatWindow({
               <p className="text-sm">{msgSearch ? 'Nenhuma mensagem encontrada' : 'Nenhuma mensagem ainda'}</p>
             </div>
           ) : (
-            grouped.map((item, index) => {
-              if (item.type === 'separator') {
-                return (
-                  <div key={`sep-${index}`} className="flex justify-center py-3">
-                    <span className="text-[11px] text-muted-foreground bg-muted/80 px-3 py-1 rounded-full shadow-sm">
-                      {item.label}
-                    </span>
-                  </div>
-                );
-              }
-
-              return (
-                <ChatMessage
-                  key={
-                    item.data.client_message_id ||
-                    item.data.provider_message_id ||
-                    item.data.server_message_id ||
-                    item.data.id
-                  }
-                  message={item.data}
-                  contactAvatarUrl={conversation.avatar_url}
-                  contactName={conversation.contact_name}
-                  currentUserName={currentUserName}
-                  onReply={(message) => setReplyTo(message)}
-                  onReact={(message, emoji) => void handleReact(message, emoji)}
-                  onRetry={handleRetryMessage}
-                  onInfo={handleMessageInfo}
-                  onTranscribeAudio={(message) => void handleTranscribeAudio(message)}
-                  isTranscribingAudio={transcribingMessageIds.has(resolveIncomingMessageIdentifier(item.data))}
-                  onOpenMedia={(mediaItem) => {
-                    setLightboxActiveId(mediaItem.id);
-                    setIsLightboxOpen(true);
-                  }}
-                  onStartConversation={(phone) => onOpenStartConversation?.(phone)}
-                />
-              );
-            })
+            grouped.map(renderThreadItem)
           )}
           <div ref={messagesEndRef} />
           </div>
+          )}
 
           <div className="absolute inset-x-0 bottom-0 z-30">
           <MessageInput

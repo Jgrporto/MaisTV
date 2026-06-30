@@ -22,6 +22,8 @@ import { cn } from '@/lib/utils';
 import ContactAvatar from './ContactAvatar';
 import AudioTranscriptionPanel from './AudioTranscriptionPanel';
 import AudioMessagePlayer from './AudioMessagePlayer';
+import LazyMedia from '@/features/chat/components/LazyMedia';
+import { fetchChatMediaUrl } from '@/lib/whatsapp-api';
 
 const QUICK_REACTIONS = [
   '\uD83D\uDC4D',
@@ -282,6 +284,10 @@ function AttachmentPreview({
   const attachmentType = useMemo(() => resolveAttachmentType(attachment), [attachment]);
   const isSticker = resolveAttachmentKind(attachment) === 'sticker' || String(attachment?.name || '').trim().toLowerCase() === 'sticker';
   const attachmentUrl = String(attachment?.url || '').trim();
+  const mediaId = String(attachment?.mediaId || attachment?.media_id || attachment?.id || '').trim();
+  const resolveMediaSource = mediaId
+    ? () => fetchChatMediaUrl(mediaId, attachmentType === 'image' ? 'thumbnail' : 'original')
+    : undefined;
 
   if (attachmentType === 'contact') {
     const contact = attachment?.contact && typeof attachment.contact === 'object' ? attachment.contact : {};
@@ -312,61 +318,106 @@ function AttachmentPreview({
     );
   }
 
-  if (!attachmentUrl) return null;
+  if (!attachmentUrl && !mediaId) return null;
   if (failed) return <BrokenAttachment attachment={attachment} type={attachmentType} />;
 
   if (attachmentType === 'image') {
     return (
-      <button
-        type="button"
-        className={cn(
-          'mt-2 block overflow-hidden rounded-xl border border-black/5 bg-black/5',
-          isSticker ? 'w-fit max-w-[150px] bg-transparent p-1' : 'w-full',
-        )}
-        onClick={() => onOpenMedia?.(mediaItem)}
+      <LazyMedia
+        className="mt-2"
+        sourceUrl={attachmentUrl}
+        resolveSource={resolveMediaSource}
+        placeholder={<div className="h-36 w-full animate-pulse rounded-xl bg-black/10" aria-label="Carregando imagem" />}
       >
-        <img
-          src={attachmentUrl}
-          alt={attachment?.name || getAttachmentDisplayLabel(attachment)}
-          className={cn(isSticker ? 'max-h-32 max-w-[140px] object-contain' : 'max-h-72 w-full object-contain')}
-          onError={() => setFailed(true)}
-          loading="lazy"
-        />
-      </button>
+        {({ src }) => (
+        <button
+          type="button"
+          className={cn(
+            'block overflow-hidden rounded-xl border border-black/5 bg-black/5',
+            isSticker ? 'w-fit max-w-[150px] bg-transparent p-1' : 'w-full',
+          )}
+          onClick={() => onOpenMedia?.(mediaItem)}
+        >
+          <img
+            src={src}
+            alt={attachment?.name || getAttachmentDisplayLabel(attachment)}
+            className={cn(isSticker ? 'max-h-32 max-w-[140px] object-contain' : 'max-h-72 w-full object-contain')}
+            onError={() => setFailed(true)}
+            loading="lazy"
+          />
+        </button>
+        )}
+      </LazyMedia>
     );
   }
 
   if (attachmentType === 'video') {
     return (
-      <button
-        type="button"
-        className="relative mt-2 block w-full overflow-hidden rounded-xl border border-black/5 bg-black/10"
-        onClick={() => onOpenMedia?.(mediaItem)}
+      <LazyMedia
+        className="mt-2"
+        loadOnInteraction
+        sourceUrl={attachmentUrl}
+        resolveSource={resolveMediaSource}
+        placeholder={({ activate }) => (
+          <button
+            type="button"
+            className="flex h-36 w-full items-center justify-center rounded-xl border border-black/5 bg-black/10 text-xs font-medium"
+            onClick={activate}
+          >
+            Carregar video
+          </button>
+        )}
       >
-        <video
-          preload="metadata"
-          muted
-          playsInline
-          className="max-h-72 w-full object-cover"
-          onError={() => setFailed(true)}
+        {({ src }) => (
+        <button
+          type="button"
+          className="relative block w-full overflow-hidden rounded-xl border border-black/5 bg-black/10"
+          onClick={() => onOpenMedia?.(mediaItem)}
         >
-          <source src={attachmentUrl} type={attachment?.mimeType || 'video/mp4'} />
-        </video>
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/12">
-          <div className="rounded-full bg-black/45 px-3 py-1.5 text-xs font-medium text-white">
-            Abrir video
+          <video
+            preload="metadata"
+            muted
+            playsInline
+            className="max-h-72 w-full object-cover"
+            onError={() => setFailed(true)}
+          >
+            <source src={src} type={attachment?.mimeType || 'video/mp4'} />
+          </video>
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/12">
+            <div className="rounded-full bg-black/45 px-3 py-1.5 text-xs font-medium text-white">
+              Abrir video
+            </div>
           </div>
-        </div>
-      </button>
+        </button>
+        )}
+      </LazyMedia>
     );
   }
 
   if (attachmentType === 'audio') {
     return (
-      <div className="mt-2">
+      <LazyMedia
+        className="mt-2"
+        loadOnInteraction
+        sourceUrl={attachmentUrl}
+        resolveSource={resolveMediaSource}
+        placeholder={({ activate }) => (
+          <button
+            type="button"
+            className="flex min-h-12 w-full items-center gap-2 rounded-xl border border-black/10 bg-black/5 px-3 py-2 text-sm font-medium"
+            onClick={activate}
+          >
+            <Headphones className="h-4 w-4" />
+            Carregar audio
+          </button>
+        )}
+      >
+        {({ src }) => (
+        <>
         <AudioMessagePlayer
-          src={attachmentUrl}
+          src={src}
           mimeType={attachment?.mimeType || 'audio/ogg'}
+          className=""
           avatarSrc={mediaItem?.avatarUrl || ''}
           avatarName={mediaItem?.senderName || 'Contato'}
           onError={() => setFailed(true)}
@@ -377,7 +428,9 @@ function AttachmentPreview({
           onTranscribe={onTranscribeAudio}
           isAgent={isAgent}
         />
-      </div>
+        </>
+        )}
+      </LazyMedia>
     );
   }
 

@@ -1,0 +1,11 @@
+import 'dotenv/config';
+import { createAuthMiddleware,createLegacyAuthResolver } from '../services/auth-adapter.service.mjs';
+import { createSseRouter } from '../routes/sse.routes.mjs';
+import { createHealthRouter } from '../routes/health.routes.mjs';
+import { captureException,initSentry,installProcessErrorHandlers } from '../observability/index.mjs';
+import { getLogger } from '../services/logger.service.mjs';
+const {default:express}=await import('express').catch(e=>{throw new Error(`SSE server cannot start. Install express: ${e.message}`)});
+const logger=await getLogger();await initSentry();installProcessErrorHandlers(logger);const app=express();app.disable('x-powered-by');const auth=createAuthMiddleware({resolveSession:createLegacyAuthResolver()});
+app.use('/api',await createSseRouter({authMiddleware:auth}));app.use('/api',await createHealthRouter());
+app.use((error,_req,res,_next)=>{logger.error({err:error},'sse request failed');captureException(error,{tags:{service:'sse'}});if(!res.headersSent)res.status(error.statusCode||500).json({error:'sse_error',message:error.message});});
+const port=Number(process.env.SSE_PORT||5055);const host=String(process.env.SSE_HOST||'127.0.0.1');app.listen(port,host,()=>console.log(`SSE server listening on ${host}:${port}`));

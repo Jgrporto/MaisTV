@@ -1,0 +1,2 @@
+import 'dotenv/config';import { QUEUE_NAMES } from '../queues/queue-names.mjs';import { startWorker } from './worker-runtime.mjs';import { getLogger } from '../services/logger.service.mjs';
+await startWorker(QUEUE_NAMES.automations,async(job)=>{(await getLogger()).info({jobId:job.id},'automation placeholder acknowledged; legacy automations remain authoritative');return {delegatedToLegacy:true};},{concurrency:1});

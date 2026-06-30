@@ -1,0 +1,2 @@
+import { openSseConnection } from '../realtime/sse.service.mjs';
+export const createSseRouter=async({authMiddleware}={})=>{const {default:express}=await import('express').catch(e=>{throw new Error(`Express SSE route unavailable. Install express: ${e.message}`)});const r=express.Router();if(authMiddleware)r.use(authMiddleware);r.get('/events',(req,res,next)=>openSseConnection(req,res).catch(next));return r;};

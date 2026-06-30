@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import express from 'express';
 import { readJsonBackedStore, writeJsonBackedStore } from './sql-store.js';
 import {
   isWhatsappSqliteStoreEnabled,
@@ -59,6 +60,8 @@ import { attachSlowRouteLogger } from './middlewares/slow-route-logger.mjs';
 import { handleCustomerReadRoutes } from './routes/customers.routes.mjs';
 import { handleDashboardRoutes } from './routes/dashboard.routes.mjs';
 import { createLogoutAssignmentRecoveryService } from './services/logout-assignment-recovery.service.mjs';
+import { registerChatArchitecture } from './routes/register-chat-architecture.mjs';
+import { captureException, initSentry } from './observability/index.mjs';
 import { askTavinho, getTavinhoKnowledgeSummary } from './tavinho/service.mjs';
 import { DEFAULT_TAVINHO_SETTINGS, normalizeTavinhoSettings } from './tavinho/settings.mjs';
 import {
@@ -81,6 +84,9 @@ const IS_ASSIGNMENT_WORKER_ROLE = ['assignment-worker', 'local-assignment-worker
 const LOCAL_API_HTTP_ENABLED =
   String(process.env.LOCAL_API_HTTP_ENABLED || (IS_ROUTINE_WORKER_ROLE || IS_ASSIGNMENT_WORKER_ROLE ? 'false' : 'true')).toLowerCase() !==
   'false';
+const CHAT_ARCHITECTURE_ENABLED = ['true', '1', 'yes', 'sim'].includes(
+  String(process.env.CHAT_ARCHITECTURE_ENABLED || '').trim().toLowerCase(),
+);
 const DATA_DIR = path.join(__dirname, 'data');
 const STORE_PATH = path.join(DATA_DIR, 'store.json');
 const WHATSAPP_STORE_PATH = process.env.WHATSAPP_STORE_PATH || path.join(DATA_DIR, 'whatsapp-store.json');
@@ -4608,6 +4614,8 @@ const sanitizeAuthenticatedUserForClient = (store, user = {}) => {
     role_permissions: permissions,
     permissions,
     settings_access: settingsAccess,
+    service_ids: getUserServiceIds(store, user),
+    queue_ids: getUserServiceIds(store, user),
   };
 };
 
@@ -5092,6 +5100,72 @@ const requireAuthenticatedSession = async (req) => {
     store,
     ...context,
   };
+};
+
+const CHAT_ARCHITECTURE_PATHS = [
+  '/api/conversations',
+  '/api/messages/send',
+  '/api/media/',
+  '/api/webhooks/meta',
+  '/api/health/postgres',
+  '/api/health/redis',
+  '/api/health/queues',
+  '/api/health/realtime',
+  '/admin/queues',
+];
+
+const isChatArchitecturePath = (pathname = '') =>
+  CHAT_ARCHITECTURE_PATHS.some((routePath) =>
+    routePath.endsWith('/') ? pathname.startsWith(routePath) : pathname === routePath || pathname.startsWith(`${routePath}/`),
+  );
+
+let chatArchitectureAppPromise = null;
+
+const resolveChatArchitectureSession = async (req) => {
+  const authContext = await requireAuthenticatedSession(req);
+  const user = authContext.user || {};
+  const queueIds = [
+    ...getUserServiceIds(authContext.store, user),
+    ...(Array.isArray(user.queue_ids) ? user.queue_ids : []),
+    ...(Array.isArray(user.queueIds) ? user.queueIds : []),
+    ...(Array.isArray(user.service_ids) ? user.service_ids : []),
+    ...(Array.isArray(user.serviceIds) ? user.serviceIds : []),
+  ];
+
+  return {
+    userId: String(user.id || user.email || '').trim(),
+    tenantId: String(user.tenant_id || user.tenantId || process.env.CHAT_DEFAULT_TENANT_ID || '').trim(),
+    queueIds: Array.from(new Set(queueIds.map((value) => String(value || '').trim()).filter(Boolean))),
+    roles: [user.role, user.role_name].map((value) => String(value || '').trim()).filter(Boolean),
+    raw: user,
+  };
+};
+
+const getChatArchitectureApp = () => {
+  if (!chatArchitectureAppPromise) {
+    chatArchitectureAppPromise = (async () => {
+      const app = express();
+      app.disable('x-powered-by');
+      await registerChatArchitecture(app, {
+        resolveSession: resolveChatArchitectureSession,
+        includeSse: false,
+        includeBullBoard: String(process.env.BULL_BOARD_ENABLED || 'true').toLowerCase() !== 'false',
+      });
+      app.use((error, _req, res, _next) => {
+        if (res.headersSent) return;
+        captureException(error, { tags: { service: 'local-api-chat-architecture' } });
+        res.status(error?.statusCode || 500).json({
+          error: 'chat_architecture_error',
+          message: error?.message || 'Falha na nova camada de atendimento.',
+        });
+      });
+      return app;
+    })().catch((error) => {
+      chatArchitectureAppPromise = null;
+      throw error;
+    });
+  }
+  return chatArchitectureAppPromise;
 };
 
 const invalidateSessionToken = async (token) => {
@@ -9868,6 +9942,12 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 204, {});
     }
 
+    if (CHAT_ARCHITECTURE_ENABLED && isChatArchitecturePath(url.pathname)) {
+      const chatArchitectureApp = await getChatArchitectureApp();
+      chatArchitectureApp(req, res);
+      return;
+    }
+
     if (
       await handleCoreUtilityRoutes(req, res, {
         sendJson,
@@ -11814,6 +11894,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 const initializeLocalApiRuntime = async ({ httpEnabled = true } = {}) => {
+  if (CHAT_ARCHITECTURE_ENABLED) await initSentry();
   await ensureStore();
   if (httpEnabled && !IS_AUTH_API_ROLE) {
     await recoverCustomerSyncStateOnBoot();

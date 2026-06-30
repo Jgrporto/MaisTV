@@ -1,5 +1,7 @@
 ﻿import { buildWhatsappApiUrl, requestWhatsappJson } from './whatsapp-http';
 
+import { requestChatJson } from '@/features/chat/api/chat-api';
+
 const SECTOR_TO_DEPARTMENT = {
   suporte: 'support',
   comercial: 'sales',
@@ -51,12 +53,12 @@ const resolveDepartment = (sector) => {
 };
 
 const resolveMessageContent = (message) => {
-  if (String(message?.content || '').trim()) {
-    return String(message.content);
+  if (String(message?.content || message?.body || '').trim()) {
+    return String(message.content || message.body);
   }
 
   const firstAttachment = Array.isArray(message?.attachments) ? message.attachments[0] : null;
-  const attachmentType = String(firstAttachment?.type || message?.messageType || '').toLowerCase();
+  const attachmentType = String(firstAttachment?.type || message?.messageType || message?.message_type || message?.type || '').toLowerCase();
 
   if (attachmentType === 'image') return '[Imagem]';
   if (attachmentType === 'audio') return '[Audio]';
@@ -68,9 +70,10 @@ const resolveMessageContent = (message) => {
 };
 
 const resolveSenderType = (message) => {
-  const type = String(message?.type || message?.from || '').toLowerCase();
+  const type = String(message?.sender_type || message?.senderType || message?.from || '').toLowerCase();
+  const direction = String(message?.direction || '').toLowerCase();
 
-  if (type === 'agent') return 'agent';
+  if (type === 'agent' || direction === 'outbound') return 'agent';
   if (type === 'system') return 'system';
   return 'client';
 };
@@ -150,9 +153,18 @@ const normalizeAttachmentUrl = (value) => {
 
 const normalizeWhatsappAttachment = (attachment = {}) => ({
   ...attachment,
-  url: normalizeAttachmentUrl(attachment.url),
+  id: attachment.id || attachment.mediaId || attachment.media_id || null,
+  mediaId: attachment.mediaId || attachment.media_id || attachment.id || null,
+  url: normalizeAttachmentUrl(
+    attachment.thumbnailUrl ||
+      attachment.thumbnail_url ||
+      attachment.url ||
+      (!(attachment.id || attachment.mediaId || attachment.media_id) ? attachment.originalUrl || attachment.original_url : ''),
+  ),
+  originalUrl: normalizeAttachmentUrl(attachment.originalUrl || attachment.original_url),
+  thumbnailUrl: normalizeAttachmentUrl(attachment.thumbnailUrl || attachment.thumbnail_url),
   name: attachment.name || '',
-  mimeType: attachment.mimeType || attachment.mimetype || '',
+  mimeType: attachment.mimeType || attachment.mime_type || attachment.mimetype || '',
 });
 
 const buildFallbackSourceLabel = (selector = {}, conversationId = '') => {
@@ -286,8 +298,8 @@ export const normalizeWhatsappConversation = (conversation = {}) => {
     status: conversation.status || 'waiting',
     priority: conversation.priority || 'low',
     department: resolveDepartment(conversation.sector),
-    contact_name: customer.name || 'Contato sem nome',
-    contact_phone: customer.phone || '',
+    contact_name: conversation.contact_name || customer.name || 'Contato sem nome',
+    contact_phone: conversation.contact_phone || customer.phone || '',
     phone_number_id:
       conversation.phone_number_id ||
       conversation.phoneNumberId ||
@@ -353,6 +365,7 @@ export const normalizeWhatsappConversation = (conversation = {}) => {
       return Date.now() - timeMs <= 24 * 60 * 60 * 1000;
     })(),
     avatar_url:
+      conversation.avatar_url ||
       customer.profilePictureUrl ||
       customer.profile_picture_url ||
       customer.avatarUrl ||
@@ -362,6 +375,13 @@ export const normalizeWhatsappConversation = (conversation = {}) => {
     assigned_agent_id: conversation.assigned_agent_id || conversation.assignedAgentId || '',
     assigned_agent_email: conversation.assigned_agent_email || conversation.assignedAgentEmail || '',
     assigned_agent_name: conversation.assigned_agent_name || conversation.assignedAgentName || '',
+    queue_id: conversation.queue_id || conversation.queueId || '',
+    service_id: conversation.service_id || conversation.serviceId || '',
+    is_pinned: Boolean(conversation.is_pinned || conversation.isPinned),
+    manual_unread: Boolean(conversation.manual_unread || conversation.manualUnread),
+    source_accounts: Array.isArray(conversation.source_accounts) ? conversation.source_accounts : [],
+    active_route_selector: conversation.active_route_selector || conversation.activeRouteSelector || null,
+    default_route_selector: conversation.default_route_selector || conversation.defaultRouteSelector || null,
     assigned_at: conversation.assigned_at || conversation.assignedAt || '',
     assignment_source: conversation.assignment_source || conversation.assignmentSource || '',
     notes: conversation.notes || conversation.note || '',
@@ -388,7 +408,9 @@ export const normalizeWhatsappMessage = (message = {}, options = {}) => {
   const customerName = message.customerName || '';
   const attachments = Array.isArray(message.attachments)
     ? message.attachments.map(normalizeWhatsappAttachment)
-    : [];
+    : message.media && typeof message.media === 'object'
+      ? [normalizeWhatsappAttachment({ ...message.media, type: message.type || message.messageType || 'document' })]
+      : [];
   const serverMessageId = resolveIncomingMessageServerId(message);
   const replyToId =
     message.reply_to_id ||
@@ -408,7 +430,7 @@ export const normalizeWhatsappMessage = (message = {}, options = {}) => {
     server_message_id: serverMessageId,
     client_message_id: message.clientMessageId || message.client_message_id || null,
     provider_message_id: message.providerMessageId || message.provider_message_id || message.wamid || serverMessageId || null,
-    conversation_id: message.conversationId || null,
+    conversation_id: message.conversationId || message.conversation_id || null,
     sender_type: senderType,
     origin,
     is_bot_message:
@@ -427,7 +449,7 @@ export const normalizeWhatsappMessage = (message = {}, options = {}) => {
         : senderType === 'system'
           ? 'Sistema'
           : customerName || 'Cliente',
-    message_type: message.messageType || 'text',
+    message_type: message.messageType || message.message_type || message.type || 'text',
     status: message.status || 'sent',
     content: resolveMessageContent(message),
     transcription:
@@ -715,6 +737,81 @@ export const fetchWhatsappConversations = async (options = {}) => {
     conversationsResponseCache.delete(oldestKey);
   }
   return items;
+};
+
+const requestNewChatJson = async (path, fallback) => {
+  try {
+    return await requestChatJson(path, { method: 'GET' });
+  } catch (error) {
+    const status = Number(error?.status || 0);
+    if (typeof fallback === 'function' && (!status || status >= 500 || [404, 405, 501].includes(status))) {
+      return fallback();
+    }
+    throw error;
+  }
+};
+
+export const fetchChatConversationsPage = async (options = {}) => {
+  const params = new URLSearchParams();
+  params.set('limit', String(options.limit || 50));
+  if (options.cursor) params.set('cursor', String(options.cursor));
+  if (options.status) params.set('status', String(options.status));
+  if (options.queueId) params.set('queueId', String(options.queueId));
+  const path = `/api/conversations?${params.toString()}`;
+  const data = await requestNewChatJson(path, async () => ({
+    items: await fetchWhatsappConversations({ summary: true, limit: options.limit || 50 }),
+    nextCursor: null,
+    hasMore: false,
+    source: 'legacy',
+  }));
+  const rawItems = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
+  const isLegacySource = data?.source === 'legacy';
+  return {
+    items: isLegacySource ? aggregateConversationsByCustomerPhone(rawItems) : rawItems.map(normalizeWhatsappConversation),
+    nextCursor: data?.nextCursor || data?.next_cursor || null,
+    hasMore: Boolean(data?.hasMore ?? data?.has_more ?? data?.nextCursor ?? data?.next_cursor),
+    source: data?.source || 'postgres',
+  };
+};
+
+export const fetchChatMessagesPage = async (conversationId, options = {}) => {
+  const safeConversationId = String(conversationId || '').trim();
+  if (!safeConversationId) return { items: [], prevCursor: null, hasMore: false };
+  const params = new URLSearchParams();
+  params.set('limit', String(options.limit || 20));
+  if (options.before) params.set('before', String(options.before));
+  const path = `/api/conversations/${encodeURIComponent(safeConversationId)}/messages?${params.toString()}`;
+  const data = await requestNewChatJson(path, async () => {
+    const items = await fetchWhatsappMessages(safeConversationId, {
+      tail: options.limit || 20,
+      until: options.before || undefined,
+      conversationIds: options.conversationIds,
+      sourceAccounts: options.sourceAccounts,
+    });
+    return {
+      items,
+      prevCursor: items[0]?.created_date || items[0]?.timestamp || null,
+      hasMore: items.length >= (options.limit || 20),
+      source: 'legacy',
+    };
+  });
+  const rawItems = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
+  const items = rawItems.map((message, index) => normalizeWhatsappMessage({ ...message, __fetchIndex: index }));
+  items.sort((left, right) => resolveMessageTimeMs(left) - resolveMessageTimeMs(right));
+  return {
+    items: attachStableMessageKeys(items),
+    prevCursor: data?.prevCursor || data?.prev_cursor || null,
+    hasMore: Boolean(data?.hasMore ?? data?.has_more),
+    source: data?.source || 'postgres',
+  };
+};
+
+export const fetchChatMediaUrl = async (mediaId, variant = 'thumbnail') => {
+  const safeMediaId = String(mediaId || '').trim();
+  if (!safeMediaId) return null;
+  const suffix = variant === 'original' ? 'signed-url' : 'thumbnail';
+  const data = await requestChatJson(`/api/media/${encodeURIComponent(safeMediaId)}/${suffix}`, { method: 'GET' });
+  return data?.url || data?.signedUrl || data?.signed_url || null;
 };
 
 export const fetchWhatsappConversationDetail = async (conversationOrId, options = {}) => {

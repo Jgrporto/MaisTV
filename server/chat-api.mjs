@@ -1,0 +1,10 @@
+import 'dotenv/config';
+import { registerChatArchitecture } from './routes/register-chat-architecture.mjs';
+import { captureException,initSentry,installProcessErrorHandlers } from './observability/index.mjs';
+import { getLogger } from './services/logger.service.mjs';
+const {default:express}=await import('express').catch(e=>{throw new Error(`Chat API cannot start. Install express: ${e.message}`)});
+const logger=await getLogger();await initSentry();installProcessErrorHandlers(logger);
+const app=express(); app.disable('x-powered-by');
+await registerChatArchitecture(app,{includeSse:false});
+app.use((error,_req,res,_next)=>{logger.error({err:error},'chat api request failed');captureException(error,{tags:{service:'chat-api'}});res.status(error.statusCode||500).json({error:'chat_api_error',message:error.message});});
+const port=Number(process.env.CHAT_API_PORT||5056);app.listen(port,()=>console.log(`Chat API listening on ${port}`));

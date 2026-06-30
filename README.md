@@ -123,3 +123,32 @@ npm run preview
 
 - Contexto funcional e tecnico: `PROJECT_CONTEXT.md`
 - Fluxo operacional de deploy na VPS: `docs/maintenance/deploy-vps.md`
+
+## Nova arquitetura incremental de chat
+
+A migração do núcleo de atendimento segue strangler pattern: PostgreSQL guarda os dados, BullMQ processa trabalhos, Redis Pub/Sub distribui eventos e SSE atualiza o frontend. SQLite/JSON e as rotas `/api/whatsapp/*` permanecem somente para compatibilidade enquanto cada coorte é validada. Checkout/NewBR, Mercado Pago, Tavinho, chatbot, rotinas, HSM, dashboard, autenticação e distribuição existentes estão fora desta migração.
+
+Infra local:
+
+```bash
+docker compose -f docker-compose.infra.yml up -d
+npm run db:migrate:chat
+```
+
+O cutover permanece desativado por padrao. Depois de migration, backfill e health checks, configure
+`CHAT_ARCHITECTURE_ENABLED=true` e `CHAT_DEFAULT_TENANT_ID` no ambiente do `maistv-api.service`.
+Para desenvolvimento, use `npm run sse` e os scripts `npm run worker:*`; as rotas REST novas sao
+delegadas pelo `server/local-api.mjs`, sem remover as rotas `/api/whatsapp/*`.
+
+Processos novos são separados em API, SSE e um processo por worker. Os units sugeridos ficam em `infra/systemd`; a configuração SSE do Nginx, com buffering desativado, fica em `infra/nginx/maistv-sse.conf`. A porta interna SSE é `5055`, pois `5054` já atende o Whisper.
+
+Documentação:
+
+- Arquitetura e compatibilidade: `docs/chat-architecture-migration.md`
+- SSE, reconexão e troubleshooting: `docs/realtime-sse.md`
+- BullMQ, Bull Board e workers: `docs/bullmq-workers.md`
+- Migration e backfill PostgreSQL: `docs/postgres-migration.md`
+- Deploy proposto e Uptime Kuma: `docs/deploy-new-chat-stack.md`
+- Rollback e reconciliação: `docs/rollback-plan.md`
+
+Sentry é opcional por `SENTRY_DSN`; sem configuração, a nova camada continua ativa. Bull Board deve permanecer autenticado/restrito. Os artefatos de deploy são sugestões versionadas: nenhuma implantação ou alteração de VPS foi executada nesta entrega.
