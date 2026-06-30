@@ -1,0 +1,382 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-inter: 'Inter', sans-serif;
+    --background: 0 0% 97%;
+    --foreground: 220 13% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 13% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 13% 12%;
+    --primary: 152 60% 42%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 220 13% 12%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 10% 46%;
+    --accent: 152 34% 92%;
+    --accent-foreground: 152 60% 30%;
+    --destructive: 354 70% 54%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 152 60% 42%;
+    --chart-1: 152 60% 42%;
+    --chart-2: 207 77% 51%;
+    --chart-3: 45 100% 51%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+    --radius: 0.5rem;
+    --sidebar-background: 206 23% 13%;
+    --sidebar-foreground: 210 18% 86%;
+    --sidebar-primary: 152 60% 42%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 203 22% 19%;
+    --sidebar-accent-foreground: 0 0% 98%;
+    --sidebar-border: 204 18% 18%;
+    --sidebar-ring: 152 60% 42%;
+    --scrollbar-thumb: 0 0% 62%;
+    --scrollbar-thumb-hover: 0 0% 48%;
+    --scrollbar-track: 0 0% 94%;
+    --wa-background: 0 0% 97%;
+    --wa-panel: 0 0% 100%;
+    --wa-header: 0 0% 100%;
+    --wa-composer: 0 0% 100%;
+    --wa-input: 220 14% 96%;
+    --wa-sent: 152 60% 42%;
+    --wa-received: 0 0% 100%;
+
+    /* Haki One exact hex palette for non-Tailwind references */
+    --haki-anthracite: #1A2229;
+    --haki-green: #22C55E;
+    --haki-blue: #3B82F6;
+    --haki-orange: #F59E0B;
+    --haki-ice: #F7F7F7;
+  }
+
+  .dark {
+    --background: 214 46% 10%;
+    --foreground: 0 0% 97%;
+    --card: 214 38% 12%;
+    --card-foreground: 0 0% 97%;
+    --popover: 214 38% 12%;
+    --popover-foreground: 0 0% 97%;
+    --primary: 142 71% 45%;
+    --primary-foreground: 0 0% 97%;
+    --secondary: 214 34% 13%;
+    --secondary-foreground: 0 0% 97%;
+    --muted: 214 26% 18%;
+    --muted-foreground: 210 12% 68%;
+    --accent: 217 91% 60%;
+    --accent-foreground: 0 0% 97%;
+    --destructive: 38 92% 50%;
+    --destructive-foreground: 0 0% 97%;
+    --border: 214 24% 20%;
+    --input: 214 24% 20%;
+    --ring: 142 71% 45%;
+    --chart-1: 142 71% 45%;
+    --chart-2: 217 91% 60%;
+    --chart-3: 38 92% 50%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+    --sidebar-background: 214 52% 9%;
+    --sidebar-foreground: 195 20% 88%;
+    --sidebar-primary: 142 71% 45%;
+    --sidebar-primary-foreground: 0 0% 97%;
+    --sidebar-accent: 214 40% 14%;
+    --sidebar-accent-foreground: 195 20% 92%;
+    --sidebar-border: 214 28% 17%;
+    --sidebar-ring: 142 71% 45%;
+    --scrollbar-thumb: 208 12% 38%;
+    --scrollbar-thumb-hover: 208 12% 48%;
+    --scrollbar-track: 208 22% 13%;
+    --wa-background: 214 46% 10%;
+    --wa-panel: 214 38% 11%;
+    --wa-header: 214 38% 11%;
+    --wa-composer: 214 36% 12%;
+    --wa-input: 214 29% 18%;
+    --wa-sent: 142 71% 45%;
+    --wa-received: 214 30% 16%;
+  }
+}
+
+
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-inter);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-y: scroll;
+    scrollbar-gutter: stable;
+  }
+
+  html {
+    scrollbar-gutter: stable;
+  }
+
+  html,
+  body {
+    scrollbar-width: none;
+  }
+
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  textarea {
+    @apply bg-background text-foreground placeholder:text-muted-foreground;
+  }
+
+  .dark input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  .dark textarea {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body[data-scroll-locked] {
+    overflow-y: scroll !important;
+    margin-right: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--scrollbar-thumb)) hsl(var(--scrollbar-track));
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: hsl(var(--scrollbar-track) / 0.42);
+    border-radius: 999px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--scrollbar-thumb) / 0.82);
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--scrollbar-thumb-hover));
+  }
+
+  html,
+  body {
+    scrollbar-width: none;
+  }
+
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+}
+
+@layer components {
+  .chat-app-shell {
+    background: hsl(var(--wa-background));
+  }
+
+  .chat-panel {
+    background: hsl(var(--wa-panel));
+  }
+
+  .chat-header {
+    background: hsl(var(--wa-header));
+  }
+
+  .chat-thread-surface {
+    background-color: hsl(var(--wa-background));
+  }
+
+  .chat-input-shell {
+    background: linear-gradient(to top, hsl(var(--background)) 70%, transparent);
+  }
+
+  .chat-input-card {
+    background: hsl(var(--wa-composer));
+  }
+
+  .chat-input-card.shadow-lg {
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  }
+
+  .chat-input-field {
+    background: hsl(var(--wa-input));
+  }
+
+  .chat-message-sent {
+    background: hsl(var(--wa-sent));
+  }
+
+  .chat-message-received {
+    background: hsl(var(--wa-received));
+  }
+
+  .attendance-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--scrollbar-thumb) / 0.78) transparent;
+    scrollbar-gutter: auto;
+  }
+
+  .attendance-scrollbar::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+    background: transparent;
+  }
+
+  .attendance-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .attendance-scrollbar::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--scrollbar-thumb) / 0.72);
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+  }
+
+  .attendance-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--scrollbar-thumb-hover) / 0.88);
+  }
+
+  .attendance-scrollbar::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  .dark body {
+    color: #F7F7F7;
+    background:
+      radial-gradient(circle at 12% 0%, rgba(34, 197, 94, 0.14), transparent 28%),
+      radial-gradient(circle at 88% 8%, rgba(59, 130, 246, 0.16), transparent 30%),
+      radial-gradient(circle at 76% 72%, rgba(34, 197, 94, 0.08), transparent 20%),
+      #07121f;
+  }
+
+  .dark .chat-app-shell {
+    background:
+      radial-gradient(circle at 85% 12%, rgba(59, 130, 246, 0.08), transparent 24%),
+      radial-gradient(circle at 68% 78%, rgba(34, 197, 94, 0.08), transparent 20%),
+      hsl(var(--wa-background));
+  }
+
+  .dark .chat-panel {
+    background: linear-gradient(180deg, rgba(7, 18, 31, 0.96) 0%, rgba(8, 20, 34, 0.98) 100%);
+    backdrop-filter: blur(16px);
+  }
+
+  .dark .chat-header {
+    background: linear-gradient(180deg, rgba(10, 22, 36, 0.96) 0%, rgba(8, 20, 34, 0.94) 100%);
+    backdrop-filter: blur(14px);
+  }
+
+  .dark .chat-input-shell {
+    background: linear-gradient(to top, rgba(7, 18, 31, 0.92) 72%, transparent);
+  }
+
+  .dark .chat-input-card {
+    background: linear-gradient(180deg, rgba(10, 22, 36, 0.96) 0%, rgba(10, 20, 32, 0.94) 100%);
+    border: 1px solid rgba(148, 163, 184, 0.10);
+    backdrop-filter: blur(18px);
+  }
+
+  .dark .chat-input-card.shadow-lg {
+    box-shadow: 0 20px 42px -24px rgba(8, 15, 33, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
+  .dark .chat-input-field {
+    background: rgba(21, 34, 52, 0.7);
+  }
+
+}
+
+@layer components {
+  .dashboard-tabs-shell {
+    @apply overflow-x-auto overflow-y-visible pb-0;
+    scrollbar-width: none;
+  }
+
+  .dashboard-tabs-shell::-webkit-scrollbar {
+    display: none;
+  }
+
+  .dashboard-tabs-track {
+    @apply relative flex min-w-max items-end gap-0 overflow-visible border-b border-border/90 pl-0;
+  }
+
+  .dashboard-browser-tab {
+    @apply relative -mb-px flex min-h-[64px] min-w-[232px] items-center gap-3 border border-border/90 border-b-transparent bg-[hsl(var(--card))] px-5 py-3 text-left transition-[background-color,border-color,color,box-shadow,transform] duration-200 ease-out;
+    border-top-left-radius: 18px;
+    border-top-right-radius: 18px;
+    clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 100%, 0 100%);
+    box-shadow: inset 0 -1px 0 hsl(var(--border) / 0.55);
+  }
+
+  .dashboard-browser-tab + .dashboard-browser-tab {
+    margin-left: -12px;
+  }
+
+  .dashboard-browser-tab:not(.dashboard-browser-tab-active):hover {
+    background: linear-gradient(180deg, hsl(var(--primary) / 0.08) 0%, hsl(var(--card)) 100%);
+    border-color: hsl(var(--primary) / 0.22);
+    box-shadow: inset 0 -1px 0 hsl(var(--border) / 0.55), 0 -2px 12px rgba(15, 23, 42, 0.045);
+    z-index: 2;
+  }
+
+  .dashboard-browser-tab:not(.dashboard-browser-tab-active):hover .dashboard-browser-tab-icon {
+    background-color: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+  }
+
+  .dashboard-browser-tab-active {
+    @apply border-primary bg-primary text-primary-foreground;
+    z-index: 4;
+    box-shadow: 0 14px 28px hsl(var(--primary) / 0.20);
+  }
+
+  .dashboard-browser-tab-icon {
+    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary transition-colors duration-200;
+  }
+
+  .dashboard-browser-tab-icon-active,
+  .dashboard-browser-tab-active:hover .dashboard-browser-tab-icon {
+    @apply text-white;
+    background-color: rgba(255, 255, 255, 0.14);
+  }
+
+  .dark .dashboard-browser-tab {
+    @apply bg-card/80;
+  }
+
+  .dark .dashboard-browser-tab:not(.dashboard-browser-tab-active):hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+}

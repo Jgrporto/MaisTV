@@ -1,0 +1,25 @@
+{
+  "name": "QuickReplyCategory",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Nome da categoria de respostas rápidas"
+    },
+    "color": {
+      "type": "string",
+      "description": "Cor hexadecimal usada na interface"
+    },
+    "icon": {
+      "type": "string",
+      "description": "Identificador visual do ícone"
+    },
+    "sortOrder": {
+      "type": "number",
+      "description": "Ordem de exibição"
+    }
+  },
+  "required": [
+    "name"
+  ]
+}

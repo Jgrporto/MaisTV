@@ -1,0 +1,17 @@
+[Unit]
+Description=NewBR Renewal API
+After=network.target
+
+[Service]
+WorkingDirectory=/var/www/newbr-login
+ExecStart=/var/www/newbr-login/venv/bin/gunicorn -w 2 -b 127.0.0.1:8091 app:app
+Restart=always
+User=www-data
+Group=www-data
+Environment=NEWBR_BASE_URL=https://painel.newbr.top
+Environment=NEWBR_LOCALE=pt
+Environment=NEWBR_APP_VERSION=3.81
+Environment=NEWBR_RUNTIME_DIR=/var/www/newbr-login/runtime
+
+[Install]
+WantedBy=multi-user.target

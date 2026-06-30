@@ -1,0 +1,18 @@
+[Unit]
+Description=MaisTV WhatsApp API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/SaasTV
+EnvironmentFile=/root/SaasTV/.env
+Environment=NODE_ENV=production
+Environment=WHATSAPP_SERVER_PORT=5050
+Environment=WHATSAPP_HTTP_ENABLED=true
+Environment=WHATSAPP_SCHEDULERS_ENABLED=false
+ExecStart=/usr/bin/node --max-old-space-size=2048 /root/SaasTV/server/whatsapp-server.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

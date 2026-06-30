@@ -1,0 +1,82 @@
+{
+  "name": "Conversation",
+  "type": "object",
+  "properties": {
+    "contact_name": {
+      "type": "string",
+      "description": "Name of the WhatsApp contact"
+    },
+    "contact_phone": {
+      "type": "string",
+      "description": "Phone number of the contact"
+    },
+    "contact_avatar": {
+      "type": "string",
+      "description": "URL of the contact's avatar"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "waiting",
+        "in_progress",
+        "resolved",
+        "closed"
+      ],
+      "default": "waiting",
+      "description": "Current status of the conversation"
+    },
+    "assigned_agent": {
+      "type": "string",
+      "description": "Email of the assigned agent"
+    },
+    "assigned_agent_name": {
+      "type": "string",
+      "description": "Name of the assigned agent"
+    },
+    "department": {
+      "type": "string",
+      "enum": [
+        "sales",
+        "support",
+        "billing",
+        "general"
+      ],
+      "default": "general"
+    },
+    "priority": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "urgent"
+      ],
+      "default": "medium"
+    },
+    "last_message": {
+      "type": "string",
+      "description": "Preview of the last message"
+    },
+    "last_message_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "unread_count": {
+      "type": "number",
+      "default": 0
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "contact_name",
+    "contact_phone"
+  ]
+}

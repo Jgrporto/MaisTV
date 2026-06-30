@@ -1,0 +1,744 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useLocation } from 'react-router-dom';
+import { AlertTriangle } from 'lucide-react';
+import ConversationList from '@/components/chat/ConversationList';
+import ChatWindow from '@/components/chat/ChatWindow';
+import ContactInfoPanel from '@/components/chat/ContactInfoPanel';
+import StartConversationDialog from '@/components/chat/StartConversationDialog';
+import { useAuth } from '@/lib/AuthContext';
+import {
+  dedupeConversationPreferences,
+  fetchConversationPreferences,
+  normalizeConversationPreference,
+  saveConversationPreference,
+} from '@/lib/conversation-preferences';
+import { fetchAllPersistedCustomers } from '@/lib/customer-sync-api';
+import { buildCustomerRows } from '@/lib/customer-base';
+import { subscribeToLocalEvents } from '@/lib/local-events';
+import { dispatchLocalRealtimeEvent } from '@/lib/realtime-events';
+import { listQuickReplySchedules } from '@/lib/quick-reply-schedules';
+import { scheduleQueryInvalidation } from '@/lib/query-invalidation';
+import {
+  decorateConversationsWithServices,
+  resolveAvailableServicesForUser,
+} from '@/lib/services';
+import { fetchServices } from '@/lib/services-api';
+import {
+  readCachedConversations,
+  readCachedDraftEntries,
+  subscribeToCachedDrafts,
+  writeCachedConversations,
+} from '@/lib/inbox-cache';
+import { enrichConversationsWithLabels, useLabelCatalog } from '@/lib/labels';
+import {
+  fetchActiveAttendanceUsers,
+  fetchAttendancePresenceStatus,
+  pauseAttendanceDistribution,
+  resumeAttendanceDistribution,
+  startAttendancePresence,
+} from '@/lib/presence-api';
+import { fetchChatbotRuntimeState } from '@/lib/chatbot-flows-api';
+import { resolveConversationAttendanceBucket } from '@/lib/attendance-buckets';
+import {
+  CHATBOT_RUNTIME_REFRESH_INTERVAL_MS,
+  CONVERSATION_REFRESH_INTERVAL_MS,
+  CONVERSATION_SUMMARY_LIMIT,
+  CUSTOMER_CACHE_REFRESH_INTERVAL_MS,
+  PRESENCE_REFRESH_INTERVAL_MS,
+  SCHEDULES_REFRESH_INTERVAL_MS,
+  SERVICES_REFRESH_INTERVAL_MS,
+} from '@/lib/performance-config';
+import { fetchLocalUsers } from '@/lib/users-api';
+import { fetchWhatsappConversationDetail, fetchWhatsappConversations } from '@/lib/whatsapp-api';
+
+const getPreferenceTime = (value) => Date.parse(String(value || '')) || 0;
+const getConversationTime = (conversation) =>
+  Math.max(
+    getPreferenceTime(conversation?.last_message_time),
+    getPreferenceTime(conversation?.updated_date),
+    getPreferenceTime(conversation?.draft_sort_at)
+  );
+
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+const normalizePhoneDigits = (value) => String(value || '').replace(/\D/g, '');
+const normalizeUserKey = (value) => String(value || '').trim().toLowerCase();
+
+const getPauseRemainingMs = (pausedUntil) => {
+  const pausedUntilMs = Date.parse(String(pausedUntil || ''));
+  return Number.isFinite(pausedUntilMs) ? Math.max(0, pausedUntilMs - Date.now()) : 0;
+};
+
+const isAdminUser = (user) => {
+  const role = normalizeUserKey(user?.role);
+  const roleName = normalizeUserKey(user?.role_name);
+  return role === 'admin' || roleName === 'administrador';
+};
+
+const isConversationAssignedToUser = (conversation, user) => {
+  const userIds = [
+    user?.id,
+    user?.email,
+    user?.username,
+  ].map(normalizeUserKey).filter(Boolean);
+  const assignedIds = [
+    conversation?.assigned_agent,
+    conversation?.assigned_agent_id,
+    conversation?.assigned_agent_email,
+  ].map(normalizeUserKey).filter(Boolean);
+  return assignedIds.some((assignedId) => userIds.includes(assignedId));
+};
+
+const mergeConversationDetail = (currentConversation, detailConversation) => {
+  if (!detailConversation) return currentConversation;
+  return {
+    ...detailConversation,
+    ...currentConversation,
+    source_conversation_ids:
+      Array.isArray(detailConversation.source_conversation_ids) && detailConversation.source_conversation_ids.length > 0
+        ? detailConversation.source_conversation_ids
+        : currentConversation.source_conversation_ids,
+    source_accounts:
+      Array.isArray(detailConversation.source_accounts) && detailConversation.source_accounts.length > 0
+        ? detailConversation.source_accounts
+        : currentConversation.source_accounts,
+    active_route_selector: detailConversation.active_route_selector || currentConversation.active_route_selector,
+    default_route_selector: detailConversation.default_route_selector || currentConversation.default_route_selector,
+  };
+};
+
+const findPendingScheduleForConversation = (conversation, schedules) => {
+  const conversationId = String(conversation?.id || '').trim();
+  const customerId = String(conversation?.customer?.id || conversation?.customer_id || '').trim();
+  const phone = normalizePhoneDigits(conversation?.contact_phone || conversation?.customer?.phone || '');
+
+  return schedules
+    .filter((schedule) => {
+      if (String(schedule?.status || '') !== 'pending') return false;
+      const schedulePhone = normalizePhoneDigits(schedule?.customerPhone || schedule?.phone || '');
+      return (
+        (conversationId && String(schedule?.conversationId || '') === conversationId) ||
+        (customerId && String(schedule?.customerId || '') === customerId) ||
+        (phone && schedulePhone && phone === schedulePhone)
+      );
+    })
+    .sort((left, right) => (Date.parse(left.scheduledAt || '') || 0) - (Date.parse(right.scheduledAt || '') || 0))[0] || null;
+};
+
+export default function Attendance() {
+  const { effectiveUser } = useAuth();
+  const queryClient = useQueryClient();
+  const location = useLocation();
+  const [selectedConversation, setSelectedConversation] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [primaryFilter, setPrimaryFilter] = useState('all');
+  const [serviceFilter, setServiceFilter] = useState('all');
+  const [labelFilter, setLabelFilter] = useState('all');
+  const [showContactInfo, setShowContactInfo] = useState(false);
+  const [startConversationOpen, setStartConversationOpen] = useState(false);
+  const [startConversationPhone, setStartConversationPhone] = useState('');
+  const [cachedConversations, setCachedConversations] = useState([]);
+  const [draftEntries, setDraftEntries] = useState([]);
+  const [distributionPauseUntil, setDistributionPauseUntil] = useState('');
+  const [distributionPauseReasonLabel, setDistributionPauseReasonLabel] = useState('');
+  const [distributionPauseTick, setDistributionPauseTick] = useState(Date.now());
+  const { customLabels, assignments, stageAssignments } = useLabelCatalog();
+  const initialConversationTargetRef = React.useRef(null);
+
+  const {
+    data: networkConversations = [],
+    isLoading,
+    isFetched,
+    isError,
+    error,
+  } = useQuery({
+    queryKey: ['conversations', 'attendance', 'summary', CONVERSATION_SUMMARY_LIMIT],
+    queryFn: () => fetchWhatsappConversations({ summary: true, limit: CONVERSATION_SUMMARY_LIMIT }),
+    refetchInterval: CONVERSATION_REFRESH_INTERVAL_MS,
+    staleTime: 10000,
+  });
+
+  const { data: customersResponse } = useQuery({
+    queryKey: ['persisted-customers', 'all'],
+    queryFn: fetchAllPersistedCustomers,
+    staleTime: CUSTOMER_CACHE_REFRESH_INTERVAL_MS,
+    refetchInterval: CUSTOMER_CACHE_REFRESH_INTERVAL_MS,
+    refetchOnMount: 'always',
+  });
+
+  const { data: conversationPreferences = [] } = useQuery({
+    queryKey: ['conversation-preferences'],
+    queryFn: fetchConversationPreferences,
+    staleTime: 5000,
+  });
+
+  const { data: quickReplySchedules = [] } = useQuery({
+    queryKey: ['quick-reply-schedules'],
+    queryFn: () => listQuickReplySchedules({ status: 'pending', sort: 'scheduledAt' }),
+    staleTime: 10000,
+    refetchInterval: SCHEDULES_REFRESH_INTERVAL_MS,
+  });
+
+  const { data: services = [] } = useQuery({
+    queryKey: ['services', 'attendance'],
+    queryFn: fetchServices,
+    staleTime: 10000,
+    refetchInterval: SERVICES_REFRESH_INTERVAL_MS,
+  });
+
+  const { data: teamUsers = [] } = useQuery({
+    queryKey: ['settings', 'users'],
+    queryFn: fetchLocalUsers,
+    staleTime: 30000,
+    enabled: isAdminUser(effectiveUser),
+  });
+
+  const { data: activeAttendanceUsers = [] } = useQuery({
+    queryKey: ['presence', 'attending-users'],
+    queryFn: fetchActiveAttendanceUsers,
+    staleTime: 10000,
+    refetchInterval: PRESENCE_REFRESH_INTERVAL_MS,
+  });
+
+  const { data: presenceStatus } = useQuery({
+    queryKey: ['presence', 'status', effectiveUser?.id],
+    queryFn: fetchAttendancePresenceStatus,
+    staleTime: 10000,
+    enabled: Boolean(effectiveUser?.id),
+  });
+
+  const { data: chatbotRuntimeState } = useQuery({
+    queryKey: ['chatbot-runtime-state'],
+    queryFn: fetchChatbotRuntimeState,
+    staleTime: 10000,
+    refetchInterval: CHATBOT_RUNTIME_REFRESH_INTERVAL_MS,
+  });
+
+  useEffect(() => {
+    let active = true;
+
+    const hydrateCache = async () => {
+      const [cached, drafts] = await Promise.all([readCachedConversations(), readCachedDraftEntries()]);
+
+      if (active && cached.length > 0) {
+        setCachedConversations(cached);
+      }
+
+      if (active) {
+        setDraftEntries(drafts);
+      }
+    };
+
+    void hydrateCache();
+    const unsubscribe = subscribeToCachedDrafts(() => {
+      void readCachedDraftEntries().then((drafts) => {
+        if (active) {
+          setDraftEntries(drafts);
+        }
+      });
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (networkConversations.length === 0) return;
+    setCachedConversations(networkConversations);
+    void writeCachedConversations(networkConversations);
+  }, [networkConversations]);
+
+  useEffect(() => {
+    const pausedUntil = String(presenceStatus?.distributionPause?.pausedUntil || presenceStatus?.presence?.paused_until || '').trim();
+    if (pausedUntil && getPauseRemainingMs(pausedUntil) > 0) {
+      setDistributionPauseUntil(pausedUntil);
+      setDistributionPauseReasonLabel(
+        String(presenceStatus?.distributionPause?.reasonLabel || presenceStatus?.presence?.pause_reason_label || '').trim(),
+      );
+      return;
+    }
+    setDistributionPauseUntil('');
+    setDistributionPauseReasonLabel('');
+  }, [presenceStatus]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setDistributionPauseTick(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  void distributionPauseTick;
+  const distributionPauseRemainingMs = getPauseRemainingMs(distributionPauseUntil);
+  const isDistributionPaused = distributionPauseRemainingMs > 0;
+
+  const handlePauseQueueDistribution = async (reason) => {
+    try {
+      const result = await pauseAttendanceDistribution(reason);
+      const pausedUntil = String(result?.distributionPause?.pausedUntil || result?.presence?.paused_until || '').trim();
+      setDistributionPauseUntil(pausedUntil || new Date(Date.now() + 10 * 60 * 1000).toISOString());
+      setDistributionPauseReasonLabel(String(result?.distributionPause?.reasonLabel || result?.presence?.pause_reason_label || '').trim());
+      setDistributionPauseTick(Date.now());
+      await queryClient.invalidateQueries({ queryKey: ['presence', 'attending-users'] });
+      await queryClient.invalidateQueries({ queryKey: ['presence', 'status'] });
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const handleResumeQueueDistribution = async () => {
+    try {
+      await resumeAttendanceDistribution();
+      setDistributionPauseUntil('');
+      setDistributionPauseReasonLabel('');
+      setDistributionPauseTick(Date.now());
+      await queryClient.invalidateQueries({ queryKey: ['presence', 'attending-users'] });
+      await queryClient.invalidateQueries({ queryKey: ['presence', 'status'] });
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  useEffect(() => {
+    if (!effectiveUser?.id) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    void startAttendancePresence()
+      .then(() => {
+        if (cancelled) return;
+        scheduleQueryInvalidation(queryClient, { queryKey: ['presence'] });
+        scheduleQueryInvalidation(queryClient, { queryKey: ['conversations', 'attendance'] });
+      })
+      .catch(() => {
+        // A tela continua carregando mesmo se a presenca falhar; as queries mostram o estado real.
+      });
+
+    const refreshAttendanceConversations = () => {
+      scheduleQueryInvalidation(queryClient, { queryKey: ['conversations', 'attendance'] });
+      scheduleQueryInvalidation(queryClient, { queryKey: ['presence', 'attending-users'] });
+      scheduleQueryInvalidation(queryClient, { queryKey: ['presence', 'status'] });
+    };
+
+    const unsubscribe = subscribeToLocalEvents((event) => {
+      if (event.type === 'conversation:preference-updated') {
+        try {
+          const payload = event.payload || {};
+          const preference = normalizeConversationPreference(payload?.preference || {});
+          if (!preference.conversation_id) return;
+
+          queryClient.setQueryData(['conversation-preferences'], (current = []) => {
+            const items = Array.isArray(current) ? current : [];
+            const itemsWithoutDuplicates = items.filter(
+              (item) => String(item?.conversation_id || item?.conversationId || item?.id || '') !== preference.conversation_id,
+            );
+            return dedupeConversationPreferences([preference, ...itemsWithoutDuplicates]);
+          });
+
+          void queryClient.invalidateQueries({ queryKey: ['conversation-preferences'] });
+          refreshAttendanceConversations();
+        } catch {
+          // Evento invalido nao deve derrubar a tela de atendimento.
+        }
+        return;
+      }
+
+      if (event.type === 'conversation:assignment-updated') {
+        refreshAttendanceConversations();
+        return;
+      }
+
+      if (
+        event.type === 'conversation:message-upserted' ||
+        event.type === 'conversation:message-status-updated' ||
+        event.type === 'conversation:message-reaction-updated'
+      ) {
+        dispatchLocalRealtimeEvent(event.type, event.payload || {});
+        refreshAttendanceConversations();
+        return;
+      }
+
+      if (event.type === 'presence:distribution-paused' || event.type === 'presence:distribution-resumed') {
+        scheduleQueryInvalidation(queryClient, { queryKey: ['presence'] });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [effectiveUser?.id, queryClient]);
+
+  const shouldUseCachedConversations =
+    networkConversations.length === 0 &&
+    cachedConversations.length > 0 &&
+    (!isFetched || isError);
+  const baseConversations =
+    networkConversations.length > 0 ? networkConversations : shouldUseCachedConversations ? cachedConversations : [];
+  const persistedCustomers = Array.isArray(customersResponse?.rows) ? customersResponse.rows : [];
+  const customerRows = useMemo(
+    () => buildCustomerRows(persistedCustomers, baseConversations),
+    [persistedCustomers, baseConversations]
+  );
+  const conversationPreferencesMap = useMemo(
+    () =>
+      new Map(
+        dedupeConversationPreferences(conversationPreferences).map((preference) => [
+          preference.conversation_id,
+          preference,
+        ]),
+      ),
+    [conversationPreferences]
+  );
+  const draftEntriesMap = useMemo(
+    () => new Map(draftEntries.map((entry) => [entry.conversationId, entry])),
+    [draftEntries]
+  );
+  const availableServices = useMemo(
+    () => resolveAvailableServicesForUser(services, effectiveUser),
+    [services, effectiveUser]
+  );
+  const chatbotRuntimeContext = useMemo(
+    () => ({
+      activeSessionConversationIds: Array.isArray(chatbotRuntimeState?.activeSessionConversationIds)
+        ? chatbotRuntimeState.activeSessionConversationIds
+        : [],
+      waitingTimerConversationIds: Array.isArray(chatbotRuntimeState?.waitingTimerConversationIds)
+        ? chatbotRuntimeState.waitingTimerConversationIds
+        : [],
+      awaitingUraConversationIds: Array.isArray(chatbotRuntimeState?.awaitingUraConversationIds)
+        ? chatbotRuntimeState.awaitingUraConversationIds
+        : [],
+    }),
+    [chatbotRuntimeState],
+  );
+
+  useEffect(() => {
+    if (serviceFilter === 'all') {
+      return;
+    }
+
+    if (!availableServices.some((service) => service.id === serviceFilter)) {
+      setServiceFilter('all');
+    }
+  }, [availableServices, serviceFilter]);
+
+  const conversations = useMemo(
+    () => {
+      const enrichedConversations = enrichConversationsWithLabels(baseConversations, customerRows, {
+        customLabels,
+        assignments,
+        stageAssignments,
+        serviceRoutingLabelIds: services.flatMap((service) => service.label_ids || service.labelIds || []),
+      });
+
+      const decoratedConversations = decorateConversationsWithServices(
+        enrichedConversations
+        .map((conversation, index) => {
+          const preference = conversationPreferencesMap.get(conversation.id);
+          const draftEntry = draftEntriesMap.get(conversation.id);
+          const unreadCount = Number(conversation.unread_count || 0);
+
+          return {
+            ...conversation,
+            pending_quick_reply_schedule: findPendingScheduleForConversation(conversation, quickReplySchedules),
+            is_pinned: Boolean(preference?.is_pinned),
+            pinned_at: preference?.pinned_at || '',
+            pinned_by_id: preference?.pinned_by_id || '',
+            pinned_by_name: preference?.pinned_by_name || '',
+            manual_unread: Boolean(preference?.manual_unread),
+            manual_unread_at: preference?.manual_unread_at || '',
+            manual_unread_by_id: preference?.manual_unread_by_id || '',
+            manual_unread_by_name: preference?.manual_unread_by_name || '',
+            resolution_status: preference?.resolution_status || '',
+            resolution_type: preference?.resolution_type || '',
+            resolved_at: preference?.resolved_at || '',
+            resolved_until: preference?.resolved_until || '',
+            resolved_by_id: preference?.resolved_by_id || '',
+            resolved_by_name: preference?.resolved_by_name || '',
+            has_draft: Boolean(draftEntry?.value),
+            draft_preview: draftEntry?.value || '',
+            draft_updated_at: draftEntry?.updatedAt || '',
+            draft_sort_at: draftEntry?.sortAt || '',
+            effective_unread: unreadCount > 0 || Boolean(preference?.manual_unread),
+            sort_index: index,
+          };
+        }),
+        services,
+        effectiveUser,
+      ).map((conversation) => {
+        const resolvedAtMs = getPreferenceTime(conversation.resolved_at);
+        const lastClientMessageAtMs = getPreferenceTime(
+          conversation.last_client_message_time || conversation.last_received_at
+        );
+        const defaultResolvedUntilMs =
+          lastClientMessageAtMs > 0 ? lastClientMessageAtMs + DAY_IN_MS : resolvedAtMs + DAY_IN_MS;
+        const resolvedUntilMs = getPreferenceTime(conversation.resolved_until) || defaultResolvedUntilMs;
+        const reopenedByCustomer = resolvedAtMs > 0 && lastClientMessageAtMs > resolvedAtMs;
+        const isResolutionActive =
+          conversation.resolution_status === 'resolved' &&
+          resolvedAtMs > 0 &&
+          !reopenedByCustomer;
+        const isDailyResolved = isResolutionActive && resolvedUntilMs > Date.now();
+        const attendanceState = resolveConversationAttendanceBucket(
+          {
+            ...conversation,
+            reopened_by_customer: reopenedByCustomer,
+            is_resolution_active: isResolutionActive,
+            is_daily_resolved: isDailyResolved,
+          },
+          { chatbotRuntime: chatbotRuntimeContext },
+        );
+
+        return {
+          ...conversation,
+          reopened_by_customer: reopenedByCustomer,
+          is_resolution_active: isResolutionActive,
+          is_daily_resolved: isDailyResolved,
+          resolved_until_effective: resolvedUntilMs ? new Date(resolvedUntilMs).toISOString() : '',
+          attendance_bucket: attendanceState.bucket,
+          attendance_bucket_reason: attendanceState.reason,
+          resolution_kind: attendanceState.resolutionKind,
+        };
+      });
+
+      const visibleConversations = isAdminUser(effectiveUser)
+        ? decoratedConversations
+        : decoratedConversations.filter(
+            (conversation) =>
+              conversation.attendance_bucket === 'active' &&
+              isConversationAssignedToUser(conversation, effectiveUser),
+          );
+
+      return visibleConversations
+        .sort((left, right) => {
+          if (left.is_pinned !== right.is_pinned) {
+            return left.is_pinned ? -1 : 1;
+          }
+
+          if (left.is_pinned && right.is_pinned) {
+            const leftPinnedAt = getPreferenceTime(left.pinned_at);
+            const rightPinnedAt = getPreferenceTime(right.pinned_at);
+            if (leftPinnedAt !== rightPinnedAt) {
+              return rightPinnedAt - leftPinnedAt;
+            }
+          }
+
+          const timeDifference = getConversationTime(right) - getConversationTime(left);
+          if (timeDifference !== 0) {
+            return timeDifference;
+          }
+
+          return left.sort_index - right.sort_index;
+        });
+    },
+    [
+      assignments,
+      baseConversations,
+      chatbotRuntimeContext,
+      conversationPreferencesMap,
+      customLabels,
+      customerRows,
+      draftEntriesMap,
+      quickReplySchedules,
+      services,
+      stageAssignments,
+      effectiveUser,
+    ]
+  );
+
+  useEffect(() => {
+    const target = location.state?.openConversation;
+    if (!target || conversations.length === 0) return;
+
+    const key = JSON.stringify({
+      conversationId: target.conversationId || '',
+      customerId: target.customerId || '',
+      phone: normalizePhoneDigits(target.phone || ''),
+    });
+    if (initialConversationTargetRef.current === key) return;
+
+    const targetIds = new Set(
+      [
+        target.conversationId,
+        target.customerId,
+        ...(Array.isArray(target.sourceConversationIds) ? target.sourceConversationIds : []),
+      ].map((id) => String(id || '').trim()).filter(Boolean),
+    );
+    const targetPhone = normalizePhoneDigits(target.phone || '');
+    const matchedConversation = conversations.find((conversation) => {
+      const conversationIds = [
+        conversation.id,
+        conversation.aggregate_conversation_id,
+        conversation.customer?.id,
+        ...(Array.isArray(conversation.source_conversation_ids) ? conversation.source_conversation_ids : []),
+      ].map((id) => String(id || '').trim()).filter(Boolean);
+      const hasMatchingId = conversationIds.some((id) => targetIds.has(id));
+      const conversationPhone = normalizePhoneDigits(conversation.contact_phone || conversation.customer?.phone || '');
+      return hasMatchingId || (targetPhone && conversationPhone === targetPhone);
+    });
+
+    if (matchedConversation) {
+      initialConversationTargetRef.current = key;
+      handleSelectConversation(matchedConversation);
+    }
+  }, [conversations, location.state?.openConversation]);
+
+  useEffect(() => {
+    if (!selectedConversation?.id) return;
+
+    const refreshedConversation = conversations.find((conversation) => conversation.id === selectedConversation.id);
+    if (refreshedConversation) {
+      setSelectedConversation(refreshedConversation);
+      return;
+    }
+
+    setSelectedConversation(null);
+  }, [conversations, selectedConversation?.id]);
+
+  const handleSelectConversation = (conv) => {
+    setSelectedConversation(conv);
+    setShowContactInfo(false);
+
+    const selectedId = String(conv?.id || '').trim();
+    if (selectedId) {
+      void fetchWhatsappConversationDetail(conv)
+        .then((detailConversation) => {
+          if (!detailConversation) return;
+          setSelectedConversation((currentConversation) => {
+            if (String(currentConversation?.id || '').trim() !== selectedId) {
+              return currentConversation;
+            }
+            return mergeConversationDetail(currentConversation, detailConversation);
+          });
+          queryClient.setQueriesData({ queryKey: ['conversations'] }, (currentData) => {
+            if (!Array.isArray(currentData)) return currentData;
+            return currentData.map((conversation) =>
+              String(conversation?.id || '').trim() === selectedId
+                ? mergeConversationDetail(conversation, detailConversation)
+                : conversation
+            );
+          });
+        })
+        .catch(() => {
+          // A lista resumida ja tem dados suficientes para operar; detalhe falho nao deve travar o atendimento.
+        });
+    }
+
+    if (!conv?.manual_unread) {
+      return;
+    }
+
+    queryClient.setQueryData(['conversation-preferences'], (current = []) =>
+      current.map((preference) =>
+        String(preference?.conversation_id) !== String(conv.id)
+          ? preference
+          : {
+              ...preference,
+              manual_unread: false,
+              manual_unread_at: '',
+              manual_unread_by_id: '',
+              manual_unread_by_name: '',
+            }
+      )
+    );
+
+    void saveConversationPreference(conv.id, {
+      manual_unread: false,
+      manual_unread_at: '',
+      manual_unread_by_id: '',
+      manual_unread_by_name: '',
+    }).catch(() => {
+      void queryClient.invalidateQueries({ queryKey: ['conversation-preferences'] });
+    });
+  };
+
+  const handleUpdateConversation = (updated) => {
+    setSelectedConversation(updated);
+  };
+
+  return (
+    <div className="chat-app-shell h-screen flex overflow-hidden bg-background">
+      {isError && conversations.length === 0 ? (
+        <div className="chat-panel w-[380px] xl:w-[400px] flex-shrink-0 border-r border-border flex items-center justify-center p-6">
+          <div className="text-center space-y-3 max-w-[240px]">
+            <div className="w-12 h-12 rounded-2xl bg-destructive/10 text-destructive flex items-center justify-center mx-auto">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-sm text-foreground">Falha ao carregar atendimentos</h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                {error?.message || 'Não foi possível consultar a API do WhatsApp.'}
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <ConversationList
+          conversations={conversations}
+          services={availableServices}
+          selectedId={selectedConversation?.id}
+          onSelect={handleSelectConversation}
+          searchTerm={searchTerm}
+          onSearchChange={setSearchTerm}
+          primaryFilter={primaryFilter}
+          onPrimaryFilterChange={setPrimaryFilter}
+          serviceFilter={serviceFilter}
+          onServiceFilterChange={setServiceFilter}
+          labelFilter={labelFilter}
+          onLabelFilterChange={setLabelFilter}
+          customLabels={customLabels}
+          currentUser={effectiveUser}
+          teamUsers={teamUsers}
+          activeUsers={activeAttendanceUsers}
+          allServices={services}
+          isLoading={!isFetched && conversations.length === 0}
+          onOpenStartConversation={() => {
+            setStartConversationPhone('');
+            setStartConversationOpen(true);
+          }}
+          isQueueDistributionPaused={isDistributionPaused}
+          queueDistributionPauseRemainingMs={distributionPauseRemainingMs}
+          queueDistributionPauseReasonLabel={distributionPauseReasonLabel}
+          onPauseQueueDistribution={handlePauseQueueDistribution}
+          onResumeQueueDistribution={handleResumeQueueDistribution}
+        />
+      )}
+      <ChatWindow
+        key={selectedConversation?.id || 'no-conversation'}
+        conversation={selectedConversation}
+        onUpdateConversation={handleUpdateConversation}
+        onClearConversation={() => {
+          setSelectedConversation(null);
+          setShowContactInfo(false);
+        }}
+        onToggleInfo={() => setShowContactInfo(v => !v)}
+        showInfo={showContactInfo}
+        currentUser={effectiveUser}
+        activeUsers={activeAttendanceUsers}
+        teamUsers={teamUsers}
+        allServices={services}
+        onOpenStartConversation={(phone) => {
+          setStartConversationPhone(String(phone || ''));
+          setStartConversationOpen(true);
+        }}
+      />
+      {selectedConversation && showContactInfo && (
+        <ContactInfoPanel
+          conversation={selectedConversation}
+          onClose={() => setShowContactInfo(false)}
+        />
+      )}
+      <StartConversationDialog
+        open={startConversationOpen}
+        onOpenChange={setStartConversationOpen}
+        services={availableServices}
+        defaultServiceId={serviceFilter === 'all' ? availableServices[0]?.id || '' : serviceFilter}
+        initialPhone={startConversationPhone}
+        currentUser={effectiveUser}
+      />
+    </div>
+  );
+}

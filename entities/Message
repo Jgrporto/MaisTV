@@ -1,0 +1,54 @@
+{
+  "name": "Message",
+  "type": "object",
+  "properties": {
+    "conversation_id": {
+      "type": "string",
+      "description": "ID of the parent conversation"
+    },
+    "content": {
+      "type": "string",
+      "description": "Message text content"
+    },
+    "sender_type": {
+      "type": "string",
+      "enum": [
+        "contact",
+        "agent",
+        "system"
+      ],
+      "description": "Who sent the message"
+    },
+    "sender_name": {
+      "type": "string"
+    },
+    "message_type": {
+      "type": "string",
+      "enum": [
+        "text",
+        "image",
+        "audio",
+        "document",
+        "template"
+      ],
+      "default": "text"
+    },
+    "file_url": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "sent",
+        "delivered",
+        "read"
+      ],
+      "default": "sent"
+    }
+  },
+  "required": [
+    "conversation_id",
+    "content",
+    "sender_type"
+  ]
+}

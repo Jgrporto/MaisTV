@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NewBR - Renovação Manual</title>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;font-family:Arial,sans-serif;background:#f4f6f8;display:flex;align-items:center;justify-content:center;padding:24px}
+    .card{width:100%;max-width:660px;background:#fff;border-radius:20px;padding:28px;box-shadow:0 20px 50px rgba(0,0,0,.08);border:1px solid #e5e7eb}
+    .badge{display:inline-flex;font-size:12px;color:#1d4ed8;background:#dbeafe;border-radius:999px;padding:6px 10px;margin-bottom:14px;font-weight:700}
+    h1{margin:0 0 8px;font-size:25px;color:#111827}
+    p{margin:0 0 18px;color:#6b7280;font-size:14px;line-height:1.5}
+    .renew-box{border-radius:14px;background:#f9fafb;border:1px solid #e5e7eb;padding:14px;margin:18px 0}
+    .renew-row{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #e5e7eb;padding:9px 0;font-size:14px}
+    .renew-row:last-child{border-bottom:none}
+    .renew-row strong{color:#111827}.renew-row span{color:#374151;text-align:right}
+    .button-grid{display:grid;grid-template-columns:1fr;gap:10px;margin-top:8px}
+    button{width:100%;border:none;border-radius:12px;padding:15px 18px;color:#fff;font-size:15px;font-weight:800;cursor:pointer}
+    button:disabled{opacity:.65;cursor:not-allowed}
+    .primary{background:#2563eb}.danger{background:#dc2626}.dark{background:#111827}.muted-button{background:#4b5563}
+    #result{display:none;margin-top:18px;padding:14px;border-radius:12px;font-size:14px;line-height:1.5;background:#f9fafb;border:1px solid #e5e7eb;white-space:pre-wrap;word-break:break-word}
+    .success{color:#15803d;font-weight:700}.error{color:#b91c1c;font-weight:700}.muted{color:#6b7280}.warning{color:#a16207;font-weight:700}
+    details{margin-top:14px}
+    pre{overflow:auto;max-height:300px;background:#111827;color:#e5e7eb;padding:12px;border-radius:8px;font-size:12px}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="badge">Renovação NewBR</div>
+    <h1>Renovação manual sem webhook</h1>
+    <p>
+      O botão <strong>Renovar agora</strong> faz login pelo Worker, captura o token correto da NewBR e chama a API de renovação imediatamente pelo navegador.
+    </p>
+
+    <div class="renew-box">
+      <div class="renew-row"><strong>ID do cliente</strong><span id="customerIdLabel"></span></div>
+      <div class="renew-row"><strong>Package ID</strong><span id="packageIdLabel"></span></div>
+      <div class="renew-row"><strong>Conexões</strong><span id="connectionsLabel"></span></div>
+      <div class="renew-row"><strong>Referência</strong><span id="referenceLabel"></span></div>
+    </div>
+
+    <div class="button-grid">
+      <button id="renewNowButton" class="danger" onclick="renewNowBrowser()">Renovar agora</button>
+      <button id="prepareButton" class="primary" onclick="prepareOnly()">Apenas preparar token + pendência</button>
+      <button class="dark" onclick="checkStatus()">Ver status salvo</button>
+      <button class="muted-button" onclick="simulateWebhook()">Simular webhook aprovado</button>
+    </div>
+
+    <div id="result"></div>
+  </main>
+
+  <script>
+    const ACCOUNT_KEY = "newbr-main";
+
+    const RENEWAL_CONFIG = {
+      account_key: ACCOUNT_KEY,
+      customer_id: "mVLll6NELQ",
+      package_id: "BV4D3rLaqZ",
+      connections: 1,
+      external_reference: "newbr-renew-mVLll6NELQ-BV4D3rLaqZ"
+    };
+
+    let worker = null;
+
+    function escapeHtml(value) {
+      return String(value).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+    }
+
+    function showResult(html) {
+      const el = document.getElementById("result");
+      el.style.display = "block";
+      el.innerHTML = html;
+    }
+
+    function setBusy(isBusy) {
+      document.getElementById("renewNowButton").disabled = isBusy;
+      document.getElementById("prepareButton").disabled = isBusy;
+      document.getElementById("renewNowButton").textContent = isBusy ? "Processando..." : "Renovar agora";
+      document.getElementById("prepareButton").textContent = isBusy ? "Processando..." : "Apenas preparar token + pendência";
+    }
+
+    async function notifyBrowserStart(source) {
+      return fetch("/api/local/newbr/browser-start", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        credentials: "same-origin",
+        body: JSON.stringify({
+          mode: "browser_manual",
+          source,
+          account_key: ACCOUNT_KEY,
+          renewal: RENEWAL_CONFIG,
+          startedAt: new Date().toISOString()
+        })
+      });
+    }
+
+    async function sendTokenToBackend(token, status, data) {
+      const response = await fetch("/api/local/newbr/browser-token", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        credentials: "same-origin",
+        body: JSON.stringify({
+          account_key: ACCOUNT_KEY,
+          source: "browser-newbr-renewal",
+          status,
+          token,
+          data
+        })
+      });
+      return response.json();
+    }
+
+    async function saveRenewalIntent() {
+      const response = await fetch("/api/local/newbr/renewal-intent", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        credentials: "same-origin",
+        body: JSON.stringify(RENEWAL_CONFIG)
+      });
+      return response.json();
+    }
+
+    async function saveRenewalResult(result) {
+      const response = await fetch("/api/local/newbr/renewal-result", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        credentials: "same-origin",
+        body: JSON.stringify({
+          ...RENEWAL_CONFIG,
+          trigger_source: "browser_manual_now",
+          newbr_status: result.status,
+          newbr_ok: result.ok,
+          newbr_response: result.data,
+          renewedAt: new Date().toISOString()
+        })
+      });
+      return response.json();
+    }
+
+    async function checkStatus() {
+      try {
+        const response = await fetch(`/api/local/newbr/renewal-status?external_reference=${encodeURIComponent(RENEWAL_CONFIG.external_reference)}&account_key=${encodeURIComponent(ACCOUNT_KEY)}`, {
+          method: "GET",
+          credentials: "same-origin"
+        });
+        const data = await response.json();
+        showResult(`<strong>Status salvo:</strong><pre>${escapeHtml(JSON.stringify(data,null,2))}</pre>`);
+      } catch (error) {
+        showResult(`<span class="error">Erro ao consultar status:</span><br>${escapeHtml(error.message)}`);
+      }
+    }
+
+    async function simulateWebhook() {
+      try {
+        const response = await fetch("/api/webhooks/mercadopago/newbr-renew", {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          credentials: "same-origin",
+          body: JSON.stringify({
+            status: "approved",
+            external_reference: RENEWAL_CONFIG.external_reference
+          })
+        });
+        const data = await response.json();
+        showResult(`<strong>Webhook simulado:</strong><pre>${escapeHtml(JSON.stringify(data,null,2))}</pre>`);
+      } catch (error) {
+        showResult(`<span class="error">Erro ao simular webhook:</span><br>${escapeHtml(error.message)}`);
+      }
+    }
+
+    async function prepareOnly() {
+      await runWorkerFlow("PREPARE_ONLY");
+    }
+
+    async function renewNowBrowser() {
+      const ok = confirm(`Confirmar renovação agora?\n\nCliente: ${RENEWAL_CONFIG.customer_id}\nPacote: ${RENEWAL_CONFIG.package_id}\nConexões: ${RENEWAL_CONFIG.connections}`);
+      if (!ok) return;
+      await runWorkerFlow("RENEW_NOW_BROWSER");
+    }
+
+    async function runWorkerFlow(mode) {
+      if (!window.Worker) {
+        showResult('<span class="error">Este navegador não suporta Web Worker.</span>');
+        return;
+      }
+
+      setBusy(true);
+      showResult(`<span class="muted">Iniciando fluxo: ${escapeHtml(mode)}...</span>`);
+
+      try {
+        await notifyBrowserStart(mode === "RENEW_NOW_BROWSER" ? "browser-renew-now" : "browser-prepare-only");
+      } catch (error) {
+        console.warn("Falha ao notificar início:", error);
+      }
+
+      if (worker) worker.terminate();
+      worker = new Worker("/newbr-login-worker.js");
+
+      worker.onerror = function(error) {
+        showResult(`<span class="error">Erro ao executar Worker:</span><br>${escapeHtml(error.message || "Erro desconhecido")}`);
+        setBusy(false);
+      };
+
+      worker.onmessage = async function(event) {
+        const result = event.data || {};
+
+        if (result.type === "FLOW_ERROR") {
+          showResult(`<span class="error">Erro no fluxo:</span><br>${escapeHtml(result.message)}`);
+          finishWorker();
+          return;
+        }
+
+        if (result.type !== "FLOW_RESULT") return;
+
+        let html = "";
+        html += `<strong>Status login NewBR:</strong> ${result.login?.status || "-"} ${result.login?.ok ? "✅ OK" : "❌ Falhou"}<br><br>`;
+
+        if (!result.login?.ok || !result.login?.token) {
+          html += `<span class="error">Token não encontrado. Processo interrompido.</span>`;
+          html += `<details><summary>Resposta login</summary><pre>${escapeHtml(JSON.stringify(result.login?.data || {}, null, 2))}</pre></details>`;
+          showResult(html);
+          finishWorker();
+          return;
+        }
+
+        const token = result.login.token;
+        html += `<span class="success">Token capturado pelo navegador.</span><br>`;
+        html += `<strong>Token:</strong> ${escapeHtml(token.substring(0,26))}...${escapeHtml(token.substring(token.length-14))}<br><br>`;
+
+        try {
+          const tokenSave = await sendTokenToBackend(token, result.login.status, result.login.data);
+          const intent = await saveRenewalIntent();
+
+          html += tokenSave.ok ? `<span class="success">Token salvo no backend.</span><br>` : `<span class="error">Falha ao salvar token.</span><br>`;
+          html += intent.ok ? `<span class="success">Renovação pendente salva.</span><br>` : `<span class="error">Falha ao salvar renovação pendente.</span><br>`;
+
+          if (mode === "PREPARE_ONLY") {
+            html += `<br><span class="warning">Renovação ainda não enviada. Ela ficou apenas preparada.</span>`;
+            html += `<details><summary>Detalhes</summary><pre>${escapeHtml(JSON.stringify({tokenSave,intent}, null, 2))}</pre></details>`;
+            showResult(html);
+            finishWorker();
+            return;
+          }
+
+          html += `<br><strong>Status renovação NewBR:</strong> ${result.renew?.status || "-"} ${result.renew?.ok ? "✅ OK" : "❌ Falhou"}<br>`;
+
+          const savedResult = await saveRenewalResult(result.renew);
+
+          html += result.renew?.ok
+            ? `<span class="success">Cliente renovado com sucesso.</span><br>`
+            : `<span class="error">A chamada de renovação falhou.</span><br>`;
+
+          html += `<details><summary>Resposta renovação</summary><pre>${escapeHtml(JSON.stringify(result.renew?.data || {}, null, 2))}</pre></details>`;
+          html += `<details><summary>Registro backend</summary><pre>${escapeHtml(JSON.stringify(savedResult, null, 2))}</pre></details>`;
+
+          showResult(html);
+        } catch (error) {
+          html += `<span class="error">Erro ao salvar dados no backend:</span><br>${escapeHtml(error.message)}`;
+          showResult(html);
+        }
+
+        finishWorker();
+      };
+
+      worker.postMessage({type: mode, renewal: RENEWAL_CONFIG});
+    }
+
+    function finishWorker() {
+      setBusy(false);
+      if (worker) {
+        worker.terminate();
+        worker = null;
+      }
+    }
+
+    function init() {
+      document.getElementById("customerIdLabel").textContent = RENEWAL_CONFIG.customer_id;
+      document.getElementById("packageIdLabel").textContent = RENEWAL_CONFIG.package_id;
+      document.getElementById("connectionsLabel").textContent = String(RENEWAL_CONFIG.connections);
+      document.getElementById("referenceLabel").textContent = RENEWAL_CONFIG.external_reference;
+    }
+
+    init();
+  </script>
+</body>
+</html>

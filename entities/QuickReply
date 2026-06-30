@@ -1,0 +1,46 @@
+{
+  "name": "QuickReply",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Short name for the quick reply"
+    },
+    "content": {
+      "type": "string",
+      "description": "The message template content"
+    },
+    "shortcut": {
+      "type": "string",
+      "description": "Keyboard shortcut like /hello"
+    },
+    "category": {
+      "type": "string",
+      "description": "Legacy category key",
+      "default": "other"
+    },
+    "categoryId": {
+      "type": "string",
+      "description": "Configurable category id"
+    },
+    "type": {
+      "type": "string",
+      "description": "Primary action type"
+    },
+    "usageCount": {
+      "type": "number",
+      "description": "How many times this quick reply was executed"
+    },
+    "actions": {
+      "type": "array",
+      "description": "Ordered actions executed by this quick reply",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "required": [
+    "title",
+    "content"
+  ]
+}
