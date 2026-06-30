@@ -21,6 +21,8 @@ await startWorker(QUEUE_NAMES.outbound, async (job) => {
       tenantId,
       conversationId: conversation.id,
       queueId: conversation.queue_id,
+      assignedAgentId: conversation.assigned_agent_id,
+      customerPhone: conversation.contact_phone,
       type: 'message_status_updated',
       data: { messageId: message.id, status: message.status, providerMessageId: message.provider_message_id },
     });
@@ -77,6 +79,8 @@ await startWorker(QUEUE_NAMES.outbound, async (job) => {
     tenantId,
     conversationId: conversation.id,
     queueId: conversation.queue_id,
+    assignedAgentId: conversation.assigned_agent_id,
+    customerPhone: conversation.contact_phone,
     type: 'message_status_updated',
     data: { messageId: message.id, status: 'sent', providerMessageId },
   });

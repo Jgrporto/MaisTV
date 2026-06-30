@@ -25,13 +25,21 @@ export const getConversation = async (tenantId, id, access = null) => {
   return (await query(`SELECT * FROM conversations WHERE tenant_id=$1 AND id=$2${accessSql}`, values)).rows[0] || null;
 };
 export const upsertInboundConversation = async (client, data) => (await client.query(`INSERT INTO conversations
-  (tenant_id,contact_phone,contact_name,last_message,last_message_type,last_message_at,unread_count)
-  VALUES ($1,$2,$3,$4,$5,$6,0) ON CONFLICT (tenant_id,contact_phone) DO UPDATE SET
-  contact_name=COALESCE(NULLIF(EXCLUDED.contact_name,''),conversations.contact_name),updated_at=now() RETURNING *`,
-  [data.tenantId, data.contactPhone, data.contactName || null, data.body || null, data.type, data.createdAt])).rows[0];
+  (tenant_id,contact_phone,contact_name,last_message,last_message_type,last_message_at,unread_count,queue_id,service_id,assigned_agent_id)
+  VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,$9) ON CONFLICT (tenant_id,contact_phone) DO UPDATE SET
+  contact_name=COALESCE(NULLIF(EXCLUDED.contact_name,''),conversations.contact_name),
+  queue_id=COALESCE(conversations.queue_id,EXCLUDED.queue_id),service_id=COALESCE(conversations.service_id,EXCLUDED.service_id),
+  assigned_agent_id=COALESCE(conversations.assigned_agent_id,EXCLUDED.assigned_agent_id),updated_at=now() RETURNING *`,
+  [data.tenantId, data.contactPhone, data.contactName || null, data.body || null, data.type, data.createdAt,data.queueId||null,data.serviceId||null,data.assignedAgentId||null])).rows[0];
 export const updateConversationLastMessage = async (client, conversationId, message) => client.query(`UPDATE conversations SET
   last_message_id=CASE WHEN last_message_at IS NULL OR $5>=last_message_at THEN $2 ELSE last_message_id END,
   last_message=CASE WHEN last_message_at IS NULL OR $5>=last_message_at THEN $3 ELSE last_message END,
   last_message_type=CASE WHEN last_message_at IS NULL OR $5>=last_message_at THEN $4 ELSE last_message_type END,
   last_message_at=GREATEST(COALESCE(last_message_at,$5),$5),unread_count=unread_count+1,updated_at=now()
   WHERE id=$1`, [conversationId, message.id, message.body, message.type, message.created_at]);
+export const updateConversationLastOutbound = async (client, conversationId, message) => (await client.query(`UPDATE conversations SET
+  last_message_id=CASE WHEN last_message_at IS NULL OR $5>=last_message_at THEN $2 ELSE last_message_id END,
+  last_message=CASE WHEN last_message_at IS NULL OR $5>=last_message_at THEN $3 ELSE last_message END,
+  last_message_type=CASE WHEN last_message_at IS NULL OR $5>=last_message_at THEN $4 ELSE last_message_type END,
+  last_message_at=GREATEST(COALESCE(last_message_at,$5),$5),updated_at=now()
+  WHERE id=$1 RETURNING *`,[conversationId,message.id,message.body,message.type,message.created_at])).rows[0];

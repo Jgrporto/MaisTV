@@ -200,6 +200,9 @@ export default function ConversationList({
   activeUsers = [],
   allServices = [],
   isLoading = false,
+  hasMore = false,
+  isLoadingMore = false,
+  onLoadMore,
   onOpenStartConversation,
   isQueueDistributionPaused = false,
   queueDistributionPauseRemainingMs = 0,
@@ -657,7 +660,13 @@ export default function ConversationList({
       <div
         ref={scrollContainerRef}
         className="attendance-scrollbar flex-1 overflow-y-auto"
-        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          setScrollTop(element.scrollTop);
+          if (hasMore && !isLoadingMore && element.scrollHeight - element.scrollTop - element.clientHeight < 320) {
+            void onLoadMore?.();
+          }
+        }}
       >
         {isLoading ? (
           <div className="flex h-48 flex-col items-center justify-center gap-3 text-muted-foreground">
@@ -965,6 +974,12 @@ export default function ConversationList({
             })}
           </div>
         )}
+        {isLoadingMore ? (
+          <div className="flex items-center justify-center gap-2 py-3 text-xs text-muted-foreground">
+            <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+            Carregando mais conversas...
+          </div>
+        ) : null}
       </div>
     </div>
 

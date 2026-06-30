@@ -66,3 +66,18 @@ Também permanecem fora desta etapa checkout/NewBR, Mercado Pago, Tavinho, chatb
 7. Remover legado apenas em fase futura, após janela de estabilidade e backup testado.
 
 Consulte também [SSE](realtime-sse.md), [workers](bullmq-workers.md), [PostgreSQL](postgres-migration.md), [deploy](deploy-new-chat-stack.md) e [rollback](rollback-plan.md).
+
+## Matriz de flags
+
+| Flag | Padrão | Efeito quando `true` |
+| --- | --- | --- |
+| `CHAT_ARCHITECTURE_ENABLED` | `false` | Encaminha rotas novas no backend |
+| `VITE_ENABLE_NEW_CHAT_DATA_LAYER` | `false` | Usa PostgreSQL para paginação e envio de texto |
+| `VITE_ENABLE_SSE_REALTIME` | `false` | Abre EventSource autenticado e escopado |
+| `VITE_ENABLE_CHAT_VIRTUALIZATION` | `true` | Virtualiza listas extensas; não muda a fonte de dados |
+
+Ative backend antes dos flags de build do frontend. O envio de mídia continua nas rotas compatíveis até migração específica.
+
+## Execução local
+
+Use `docker compose -f docker-compose.infra.yml up -d`, aplique `npm run db:migrate:chat`, rode `npm run chat:backfill:dry` e inicie API/SSE/workers pelos scripts do `package.json`. Em outro terminal, configure os três flags apenas para a homologação local e rode `npm run dev`; alterações `VITE_*` exigem novo build. Bull Board fica em `/admin/queues` quando habilitado, e SSE deve ser acompanhado pelo health, logs Pino e painel de rede do navegador.

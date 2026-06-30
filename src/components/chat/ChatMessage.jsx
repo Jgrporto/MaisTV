@@ -281,6 +281,8 @@ function AttachmentPreview({
   isAgent = false,
 }) {
   const [failed, setFailed] = useState(false);
+  const [documentLoading, setDocumentLoading] = useState(false);
+  const [documentError, setDocumentError] = useState('');
   const attachmentType = useMemo(() => resolveAttachmentType(attachment), [attachment]);
   const isSticker = resolveAttachmentKind(attachment) === 'sticker' || String(attachment?.name || '').trim().toLowerCase() === 'sticker';
   const attachmentUrl = String(attachment?.url || '').trim();
@@ -434,17 +436,36 @@ function AttachmentPreview({
     );
   }
 
+  const openDocument = async () => {
+    if (documentLoading) return;
+    setDocumentError('');
+    setDocumentLoading(true);
+    try {
+      const url = attachmentUrl || await fetchChatMediaUrl(mediaId, 'original');
+      if (!url) throw new Error('URL do documento indisponível.');
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      setDocumentError(error?.message || 'Não foi possível abrir o documento.');
+    } finally {
+      setDocumentLoading(false);
+    }
+  };
+  const size = Number(attachment?.size || 0);
+  const sizeLabel = size > 0 ? `${(size / (size >= 1048576 ? 1048576 : 1024)).toFixed(1)} ${size >= 1048576 ? 'MB' : 'KB'}` : '';
   return (
-    <a
-      href={attachmentUrl}
-      target="_blank"
-      rel="noreferrer"
-      className="mt-2 flex items-center gap-2 rounded-xl border border-black/10 bg-black/5 px-3 py-2 text-sm"
+    <button
+      type="button"
+      onClick={openDocument}
+      disabled={documentLoading}
+      className="mt-2 flex w-full items-center gap-2 rounded-xl border border-black/10 bg-black/5 px-3 py-2 text-left text-sm disabled:opacity-70"
     >
       <FileText className="w-4 h-4" />
-      <span className="truncate">{attachment?.name || 'Documento'}</span>
-      <ExternalLink className="w-3.5 h-3.5 ml-auto flex-shrink-0" />
-    </a>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{attachment?.name || 'Documento'}</span>
+        <span className="block truncate text-[10px] opacity-65">{documentError || [attachment?.mimeType, sizeLabel].filter(Boolean).join(' · ')}</span>
+      </span>
+      {documentLoading ? <LoaderCircle className="ml-auto h-3.5 w-3.5 flex-shrink-0 animate-spin" /> : <ExternalLink className="ml-auto h-3.5 w-3.5 flex-shrink-0" />}
+    </button>
   );
 }
 

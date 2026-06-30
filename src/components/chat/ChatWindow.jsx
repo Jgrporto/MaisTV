@@ -387,6 +387,7 @@ function extractResponseMessageId(result) {
       result?.messages?.[0]?.wamid ||
       result?.messageId ||
       result?.message_id ||
+      result?.item?.id ||
       result?.wamid ||
       ''
   ).trim() || null;
@@ -1835,12 +1836,13 @@ export default function ChatWindow({
   const commitSendSuccess = (optimisticId, result, lastMessageText) => {
     const responseMessageId = extractResponseMessageId(result);
     const retryPayload = retryPayloadsRef.current.get(String(optimisticId || '').trim()) || null;
+    const responseStatus = String(result?.item?.status || '').trim().toLowerCase();
 
     updateMessage(optimisticId, (message) => ({
       ...message,
       server_message_id: responseMessageId || message.server_message_id || '',
       sender_name: currentUserName,
-      status: 'sent',
+      status: responseStatus || 'sent',
       upload_progress: 100,
       reply_preview: message.reply_preview || null,
     }));
@@ -1892,18 +1894,21 @@ export default function ChatWindow({
     });
 
     updateMessage(targetMessageId, { status: 'pending', upload_progress: 0 });
-    scheduleOptimisticSentStatus(targetMessageId);
+    if (!ENABLE_NEW_CHAT_DATA_LAYER) scheduleOptimisticSentStatus(targetMessageId);
 
     return queueOutgoingRequest(async () => {
       try {
+      const retryOptimisticMessage = retryPayloadsRef.current.get(String(targetMessageId || '').trim())?.optimisticMessage;
       const result = await sendWhatsappTextMessage({
+          conversationId: conversation.id,
           to: conversation.contact_phone,
           text: content.trim(),
           contextMessageId: replyToMessage?.id || null,
           replyTo: replyToMessage?.content || null,
           agentName: currentUserName,
+          origin: 'panel',
           routeSelector: activeManualRouteSelector,
-          clientMessageId: optimisticMessage?.client_message_id,
+          clientMessageId: optimisticMessage?.client_message_id || retryOptimisticMessage?.client_message_id || String(targetMessageId || '').replace(/^local-/, ''),
         });
 
         commitSendSuccess(targetMessageId, result, content.trim());

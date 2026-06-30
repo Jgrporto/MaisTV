@@ -15,7 +15,7 @@ export const CONVERSATION_REFRESH_INTERVAL_MS = parsePositiveInt(
 
 export const CONVERSATION_SUMMARY_LIMIT = parsePositiveInt(
   import.meta.env.VITE_CONVERSATION_SUMMARY_LIMIT,
-  50,
+  30,
 );
 
 export const MESSAGE_PAGE_LIMIT = parsePositiveInt(
@@ -42,9 +42,9 @@ const parseBoolean = (value, fallback) => {
   return !['0', 'false', 'off', 'no'].includes(String(value).trim().toLowerCase());
 };
 
-export const ENABLE_SSE_REALTIME = parseBoolean(import.meta.env.VITE_ENABLE_SSE_REALTIME, true);
+export const ENABLE_SSE_REALTIME = parseBoolean(import.meta.env.VITE_ENABLE_SSE_REALTIME, false);
 export const ENABLE_CHAT_VIRTUALIZATION = parseBoolean(import.meta.env.VITE_ENABLE_CHAT_VIRTUALIZATION, true);
-export const ENABLE_NEW_CHAT_DATA_LAYER = parseBoolean(import.meta.env.VITE_ENABLE_NEW_CHAT_DATA_LAYER, true);
+export const ENABLE_NEW_CHAT_DATA_LAYER = parseBoolean(import.meta.env.VITE_ENABLE_NEW_CHAT_DATA_LAYER, false);
 
 export const CONVERSATION_BACKGROUND_SUMMARY_LIMIT = parsePositiveInt(
   import.meta.env.VITE_CONVERSATION_BACKGROUND_SUMMARY_LIMIT,

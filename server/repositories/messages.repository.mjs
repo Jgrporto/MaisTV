@@ -11,7 +11,7 @@ export const insertInboundMessage = async (client, data) => (await client.query(
   VALUES ($1,$2,$3,'inbound','customer',$4,$5,'received',$6,$7::jsonb,$8)
   ON CONFLICT (tenant_id,provider_message_id) WHERE provider_message_id IS NOT NULL DO NOTHING RETURNING *`,
   [data.tenantId,data.conversationId,data.providerMessageId,data.type,data.body || null,data.mediaId||null,JSON.stringify(data.raw),data.createdAt])).rows[0] || null;
-export const insertPendingOutbound = async (data) => (await query(`INSERT INTO messages
+export const insertPendingOutbound = async (data, executor = null) => (await (executor || { query }).query(`INSERT INTO messages
   (tenant_id,conversation_id,client_message_id,direction,sender_type,type,body,status,raw_json)
   VALUES ($1,$2,$3,'outbound','agent',$4,$5,'pending',$6::jsonb)
   ON CONFLICT (tenant_id,client_message_id) DO UPDATE SET client_message_id=EXCLUDED.client_message_id RETURNING *`,

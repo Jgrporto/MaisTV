@@ -14,11 +14,21 @@ export const resolveChatApiBaseUrl = () => {
 
 export const buildChatApiUrl = (path) => `${resolveChatApiBaseUrl()}${path}`;
 
-export const buildChatSseUrl = () => {
+export const buildChatSseUrl = ({ conversationIds = [] } = {}) => {
   const configured = normalizeBaseUrl(import.meta.env.VITE_SSE_URL);
-  if (configured) return `${configured}/api/events`;
-  if (isLocalBrowser()) return `${window.location.protocol}//127.0.0.1:5055/api/events`;
-  return '/api/events';
+  const baseUrl = configured
+    ? `${configured}/api/events`
+    : isLocalBrowser()
+      ? `${window.location.protocol}//127.0.0.1:5055/api/events`
+      : '/api/events';
+  const normalizedIds = Array.from(new Set(
+    (Array.isArray(conversationIds) ? conversationIds : [conversationIds])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean),
+  )).slice(0, 10);
+  if (!normalizedIds.length) return baseUrl;
+  const separator = baseUrl.includes('?') ? '&' : '?';
+  return `${baseUrl}${separator}conversations=${encodeURIComponent(normalizedIds.join(','))}`;
 };
 
 export const requestChatJson = async (path, options = {}) => {

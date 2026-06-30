@@ -9,8 +9,9 @@ Execute rollback se houver perda/duplicação de mensagens, isolamento de tenant
 1. Desative as feature flags/coortes novas e direcione frontend/webhook/envio às rotas legadas.
 2. Pause produção de jobs novos; mantenha os dados e filas para auditoria.
 3. Pare SSE e workers novos.
-4. Restaure o include Nginx anterior e valide configuração.
-5. Reinicie apenas os serviços legados afetados e execute smoke tests.
+4. Recompile o frontend com `VITE_ENABLE_NEW_CHAT_DATA_LAYER=false` e `VITE_ENABLE_SSE_REALTIME=false`; mantenha `VITE_ENABLE_CHAT_VIRTUALIZATION=true`.
+5. Restaure o include Nginx anterior e valide configuração.
+6. Reinicie apenas os serviços legados afetados e execute smoke tests.
 
 ```bash
 sudo systemctl stop maistv-sse.service 'maistv-worker-*'

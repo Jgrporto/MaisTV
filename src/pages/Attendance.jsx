@@ -43,6 +43,7 @@ import { resolveConversationAttendanceBucket } from '@/lib/attendance-buckets';
 import {
   CHATBOT_RUNTIME_REFRESH_INTERVAL_MS,
   CONVERSATION_SUMMARY_LIMIT,
+  ENABLE_NEW_CHAT_DATA_LAYER,
   CUSTOMER_CACHE_REFRESH_INTERVAL_MS,
   PRESENCE_REFRESH_INTERVAL_MS,
   SCHEDULES_REFRESH_INTERVAL_MS,
@@ -50,7 +51,7 @@ import {
 } from '@/lib/performance-config';
 import { fetchLocalUsers } from '@/lib/users-api';
 import { fetchWhatsappConversationDetail } from '@/lib/whatsapp-api';
-import { useConversationSummaries } from '@/features/chat/hooks/useConversations';
+import { useConversationSummaries, useConversations } from '@/features/chat/hooks/useConversations';
 import { useChatEvents } from '@/features/chat/hooks/useChatEvents';
 import { useChatStore } from '@/features/chat/store/useChatStore';
 
@@ -161,13 +162,20 @@ export default function Attendance() {
   const { customLabels, assignments, stageAssignments } = useLabelCatalog();
   const initialConversationTargetRef = React.useRef(null);
 
-  const {
-    data: networkConversations = [],
-    isLoading,
-    isFetched,
-    isError,
-    error,
-  } = useConversationSummaries({ limit: CONVERSATION_SUMMARY_LIMIT });
+  const legacyConversationsQuery = useConversationSummaries({ limit: CONVERSATION_SUMMARY_LIMIT, enabled: !ENABLE_NEW_CHAT_DATA_LAYER });
+  const paginatedConversationsQuery = useConversations({ limit: CONVERSATION_SUMMARY_LIMIT, enabled: ENABLE_NEW_CHAT_DATA_LAYER });
+  const networkConversations = useMemo(() => {
+    if (!ENABLE_NEW_CHAT_DATA_LAYER) return legacyConversationsQuery.data || [];
+    const seen = new Set();
+    return (paginatedConversationsQuery.data?.pages || []).flatMap((page) => page?.items || []).filter((conversation) => {
+      const id = String(conversation?.id || '').trim();
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+  }, [legacyConversationsQuery.data, paginatedConversationsQuery.data]);
+  const activeConversationsQuery = ENABLE_NEW_CHAT_DATA_LAYER ? paginatedConversationsQuery : legacyConversationsQuery;
+  const { isLoading, isFetched, isError, error } = activeConversationsQuery;
 
   useChatEvents({ selectedConversationId: selectedConversation?.id });
 
@@ -707,6 +715,9 @@ export default function Attendance() {
           activeUsers={activeAttendanceUsers}
           allServices={services}
           isLoading={!isFetched && conversations.length === 0}
+          hasMore={ENABLE_NEW_CHAT_DATA_LAYER && Boolean(paginatedConversationsQuery.hasNextPage)}
+          isLoadingMore={ENABLE_NEW_CHAT_DATA_LAYER && paginatedConversationsQuery.isFetchingNextPage}
+          onLoadMore={ENABLE_NEW_CHAT_DATA_LAYER ? paginatedConversationsQuery.fetchNextPage : undefined}
           onOpenStartConversation={() => {
             setStartConversationPhone('');
             setStartConversationOpen(true);

@@ -32,8 +32,9 @@ const getConversationId = (payload) => String(
 
 export function useChatEvents({ selectedConversationId = '' } = {}) {
   const queryClient = useQueryClient();
-  const selectedConversationIdRef = useRef(selectedConversationId);
-  selectedConversationIdRef.current = selectedConversationId;
+  const normalizedSelectedConversationId = String(selectedConversationId || '').trim();
+  const selectedConversationIdRef = useRef(normalizedSelectedConversationId);
+  selectedConversationIdRef.current = normalizedSelectedConversationId;
 
   useEffect(() => {
     if (!ENABLE_SSE_REALTIME || typeof window === 'undefined' || typeof window.EventSource !== 'function') {
@@ -41,7 +42,9 @@ export function useChatEvents({ selectedConversationId = '' } = {}) {
       return undefined;
     }
 
-    const eventSource = new window.EventSource(buildChatSseUrl(), { withCredentials: true });
+    const eventSource = new window.EventSource(buildChatSseUrl({
+      conversationIds: normalizedSelectedConversationId ? [normalizedSelectedConversationId] : [],
+    }), { withCredentials: true });
     useChatStore.getState().setSseStatus('connecting');
 
     const handleOpen = () => useChatStore.getState().setSseStatus('connected');
@@ -96,5 +99,5 @@ export function useChatEvents({ selectedConversationId = '' } = {}) {
       eventSource.close();
       useChatStore.getState().setSseStatus('closed');
     };
-  }, [queryClient]);
+  }, [normalizedSelectedConversationId, queryClient]);
 }

@@ -5118,6 +5118,7 @@ const isChatArchitecturePath = (pathname = '') =>
   CHAT_ARCHITECTURE_PATHS.some((routePath) =>
     routePath.endsWith('/') ? pathname.startsWith(routePath) : pathname === routePath || pathname.startsWith(`${routePath}/`),
   );
+const isChatArchitectureHealthPath = (pathname = '') => pathname.startsWith('/api/health/');
 
 let chatArchitectureAppPromise = null;
 
@@ -9942,7 +9943,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 204, {});
     }
 
-    if (CHAT_ARCHITECTURE_ENABLED && isChatArchitecturePath(url.pathname)) {
+    if ((CHAT_ARCHITECTURE_ENABLED || isChatArchitectureHealthPath(url.pathname)) && isChatArchitecturePath(url.pathname)) {
       const chatArchitectureApp = await getChatArchitectureApp();
       chatArchitectureApp(req, res);
       return;

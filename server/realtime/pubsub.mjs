@@ -10,11 +10,12 @@ export const getPublisher = async () => {
   if (!publisherPromise) publisherPromise = createRedis().then(async (redis) => { await redis.connect(); return redis; }).catch((error) => { publisherPromise=undefined; throw error; });
   return publisherPromise;
 };
-export const publishRealtimeEvent = async ({ tenantId,userId,conversationId,queueId,type,data }) => {
+export const publishRealtimeEvent = async ({ tenantId,userId,assignedAgentId,conversationId,queueId,customerPhone,type,data }) => {
   if (!tenantId || !type) throw new Error('tenantId and type are required to publish realtime events.');
-  const payload = JSON.stringify({ eventId:crypto.randomUUID(),type,data,scope:{tenantId,userId:userId||null,conversationId:conversationId||null,queueId:queueId||null},occurredAt:new Date().toISOString() });
+  const routedUserId=assignedAgentId||userId||null;
+  const payload = JSON.stringify({ eventId:crypto.randomUUID(),type,eventType:type,data,scope:{tenantId,userId:routedUserId,assignedAgentId:routedUserId,conversationId:conversationId||null,queueId:queueId||null,customerPhone:customerPhone||null,eventType:type},occurredAt:new Date().toISOString() });
   const channels = [`tenant:${tenantId}`];
-  if (userId) channels.push(`user:${userId}`);
+  if (routedUserId) channels.push(`user:${routedUserId}`);
   if (conversationId) channels.push(`conversation:${conversationId}`);
   if (queueId) channels.push(`queue:${queueId}`);
   const publisher = await getPublisher();

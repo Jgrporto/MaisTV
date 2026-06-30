@@ -16,6 +16,22 @@ const patchConversationList = (items, conversationId, patch, { prepend = false }
 const patchConversationData = (data, conversationId, patch, options) => {
   if (Array.isArray(data)) return patchConversationList(data, conversationId, patch, options);
   if (!data || !Array.isArray(data.pages)) return data;
+  if (options?.prepend) {
+    let existing = null;
+    for (const page of data.pages) {
+      const pageItems = Array.isArray(page) ? page : page?.items;
+      existing ||= pageItems?.find((item) => getConversationId(item) === conversationId) || null;
+    }
+    const nextItem = { id: conversationId, ...(existing || {}), ...(patch || {}) };
+    const pages = data.pages.map((page, pageIndex) => {
+      const pageItems = Array.isArray(page) ? page : page?.items;
+      if (!Array.isArray(pageItems)) return page;
+      const withoutDuplicate = pageItems.filter((item) => getConversationId(item) !== conversationId);
+      const nextItems = pageIndex === 0 ? [nextItem, ...withoutDuplicate] : withoutDuplicate;
+      return Array.isArray(page) ? nextItems : { ...page, items: nextItems };
+    });
+    return { ...data, pages };
+  }
   let inserted = false;
   const pages = data.pages.map((page, pageIndex) => {
     const pageItems = Array.isArray(page) ? page : page?.items;

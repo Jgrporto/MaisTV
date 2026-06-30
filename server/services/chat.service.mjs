@@ -2,8 +2,11 @@ import crypto from 'node:crypto';
 import { decodeCursor,encodeCursor,parseLimit } from './cursor.service.mjs';
 import { listConversations,getConversation } from '../repositories/conversations.repository.mjs';
 import { listMessages,insertPendingOutbound } from '../repositories/messages.repository.mjs';
+import { updateConversationLastOutbound } from '../repositories/conversations.repository.mjs';
 import { addJob } from '../queues/queues.mjs';
 import { getChatAccessFilter } from './chat-authorization.service.mjs';
+import { withTransaction } from '../db/postgres.mjs';
+import { publishRealtimeEvent } from '../realtime/pubsub.mjs';
 const mediaShape=(row)=>row.media_id?{id:row.media_id,mimeType:null,size:null,thumbnailUrl:null,originalUrl:null,status:'pending'}:null;
 export const getConversationPage=async({auth,limit,cursor,status})=>{
   const tenantId=auth.tenantId;const access=getChatAccessFilter(auth);
@@ -22,9 +25,18 @@ export const queueOutboundMessage=async({auth,input})=>{
   if(!input.conversationId||!input.body) throw Object.assign(new Error('conversationId and body are required.'),{statusCode:400});
   const messageType=String(input.type||'text').trim().toLowerCase();
   if(messageType!=='text')throw Object.assign(new Error('The new outbound route currently accepts text only; use the compatible /api/whatsapp/send-* media routes.'),{statusCode:400});
-  if(!await getConversation(tenantId,input.conversationId,access)) throw Object.assign(new Error('Conversation not found.'),{statusCode:404});
+  const conversation=await getConversation(tenantId,input.conversationId,access);
+  if(!conversation) throw Object.assign(new Error('Conversation not found.'),{statusCode:404});
   const clientMessageId=String(input.clientMessageId||crypto.randomUUID());
-  const message=await insertPendingOutbound({tenantId,conversationId:input.conversationId,clientMessageId,type:messageType,body:input.body,raw:{requestedBy:userId}});
+  const result=await withTransaction(async(client)=>{
+    const message=await insertPendingOutbound({tenantId,conversationId:input.conversationId,clientMessageId,type:messageType,body:input.body,raw:{requestedBy:userId}},client);
+    const updatedConversation=await updateConversationLastOutbound(client,input.conversationId,message);
+    return {message,conversation:updatedConversation||conversation};
+  });
+  const message=result.message;
   await addJob('outbound','send-message',{tenantId,messageId:message.id,userId},{jobId:`outbound:${tenantId}:${clientMessageId}`});
+  const eventScope={tenantId,conversationId:conversation.id,queueId:conversation.queue_id,assignedAgentId:conversation.assigned_agent_id,customerPhone:conversation.contact_phone};
+  await publishRealtimeEvent({...eventScope,type:'new_message',data:{conversationId:conversation.id,message}});
+  await publishRealtimeEvent({...eventScope,type:'conversation_updated',data:{conversationId:conversation.id,conversation:result.conversation}});
   return message;
 };

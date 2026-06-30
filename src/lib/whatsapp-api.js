@@ -1,6 +1,7 @@
 ﻿import { buildWhatsappApiUrl, requestWhatsappJson } from './whatsapp-http';
 
 import { requestChatJson } from '@/features/chat/api/chat-api';
+import { ENABLE_NEW_CHAT_DATA_LAYER } from '@/lib/performance-config';
 
 const SECTOR_TO_DEPARTMENT = {
   suporte: 'support',
@@ -991,7 +992,20 @@ const withRouteSelectorPayload = (payload = {}, routeSelector = null) => {
   };
 };
 
-export const sendWhatsappTextMessage = async ({ to, text, contextMessageId, replyTo, agentName, origin, routeSelector, clientMessageId }) => {
+export const sendWhatsappTextMessage = async ({ conversationId, to, text, contextMessageId, replyTo, agentName, origin, routeSelector, clientMessageId }) => {
+  if (ENABLE_NEW_CHAT_DATA_LAYER && String(conversationId || '').trim()) {
+    return await requestChatJson('/api/messages/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversationId,
+        body: text,
+        type: 'text',
+        clientMessageId: clientMessageId || null,
+        replyToMessageId: contextMessageId || null,
+      }),
+    });
+  }
   return await requestWhatsappJson('/api/whatsapp/send-text', {
     method: 'POST',
     headers: {

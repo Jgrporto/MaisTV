@@ -68,3 +68,11 @@ sudo rsync -a --delete /root/SaasTV/dist/ /var/www/maistv/dist/
 - Uptime Kuma: monitors HTTP para health geral, PostgreSQL, Redis, filas e realtime, sem credenciais na URL.
 
 Ative inicialmente para um tenant/coorte e acompanhe duplicidade, failed jobs, latência, reconexões SSE e divergência com legado. Veja [rollback](rollback-plan.md).
+
+## Gate de homologação
+
+1. Flags começam `false`; confirme health com `status: "disabled"`.
+2. Rode o [dry-run do backfill](postgres-backfill.md) e valide contagens antes de qualquer `--confirm`.
+3. Ative backend e valide health, migration, filas e workers.
+4. Em um build de homologação, ative data layer e SSE; valide admin e operador comum, troca rápida de conversa, reconexão, envio `pending → sent → delivered/read`, idempotência, documento sob clique e scroll com mais de 30 conversas.
+5. Teste o rollback dos dois flags do frontend e do flag backend antes de ampliar a coorte.
