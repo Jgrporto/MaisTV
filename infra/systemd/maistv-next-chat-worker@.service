@@ -1,0 +1,26 @@
+[Unit]
+Description=MaisTV Next BullMQ chat worker (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/MaisTV
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/maistv-next/maistv-next.env
+ExecStart=/usr/bin/node server/workers/%i.worker.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=maistv-next-chat-worker-%i
+
+[Install]
+WantedBy=multi-user.target

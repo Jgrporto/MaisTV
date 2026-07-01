@@ -1,0 +1,27 @@
+[Unit]
+Description=MaisTV Next routine worker (nao iniciar antes de teste controlado)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/MaisTV
+Environment=NODE_ENV=production
+Environment=MAISTV_LOCAL_API_ROLE=routine-worker
+EnvironmentFile=/etc/maistv-next/maistv-next.env
+ExecStart=/usr/bin/env LOCAL_API_HTTP_ENABLED=false ROUTINE_DISPATCH_QUEUE_ENABLED=false ROUTINE_DISPATCH_QUEUE_WORKER_ENABLED=false ROUTINE_SCHEDULER_ENABLED=false QUICK_REPLY_SCHEDULE_ENABLED=false /usr/bin/node server/maistv-routine-worker.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=maistv-next-routine-worker
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,28 @@
+[Unit]
+Description=MaisTV Next checkout API (homologacao, renovacoes desativadas)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/MaisTV
+Environment=NODE_ENV=production
+Environment=CHECKOUT_SERVER_PORT=5351
+Environment=CHECKOUT_RENEWAL_DISABLED=true
+EnvironmentFile=/etc/maistv-next/maistv-next.env
+ExecStart=/usr/bin/node server/checkout-server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=maistv-next-checkout
+
+[Install]
+WantedBy=multi-user.target

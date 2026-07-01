@@ -265,6 +265,7 @@ import {
 import { buildFlowExecutionPlan } from "./flow-engine.js";
 import { buildInboxSectionPayload } from "./inbox-sections.js";
 import { listSqlAttendancePresence } from "./modules/attendance/presence-store.js";
+import { acceptMetaWebhook } from "./services/meta-webhook.service.mjs";
 
 const parseBooleanEnv = (value, defaultValue = false) => {
   const normalized = String(value ?? "").trim().toLowerCase();
@@ -278,6 +279,14 @@ const WHATSAPP_HTTP_ENABLED = parseBooleanEnv(process.env.WHATSAPP_HTTP_ENABLED,
 const WHATSAPP_SCHEDULERS_ENABLED = parseBooleanEnv(process.env.WHATSAPP_SCHEDULERS_ENABLED, IS_WORKER_ROLE);
 const WHATSAPP_HTTP_ROLE = String(process.env.WHATSAPP_HTTP_ROLE || "all").trim().toLowerCase();
 const SUPPORT_FLOW_EXECUTION_ENABLED = parseBooleanEnv(process.env.SUPPORT_FLOW_EXECUTION_ENABLED, true);
+const CHAT_MIRROR_META_WEBHOOK_ENABLED = parseBooleanEnv(process.env.CHAT_MIRROR_META_WEBHOOK_ENABLED, false);
+
+const mirrorMetaWebhookToChatArchitecture = ({ rawBody, payload, routeKey }) => {
+  if (!CHAT_MIRROR_META_WEBHOOK_ENABLED) return;
+  void acceptMetaWebhook({ rawBody, payload })
+    .then((result) => console.log(`[chat-mirror] route=${routeKey || "default"} accepted=true duplicate=${Boolean(result?.duplicate)}`))
+    .catch((error) => console.error(`[chat-mirror] route=${routeKey || "default"} failed:`, error?.message || error));
+};
 const WEBHOOK_SLOW_PROCESSING_THRESHOLD_MS = Math.max(
   250,
   Number.parseInt(process.env.WEBHOOK_SLOW_PROCESSING_THRESHOLD_MS || "1500", 10) || 1500,
@@ -32489,6 +32498,11 @@ const server = http.createServer(async (req, res) => {
       }
 
       const payload = parseWebhookPayloadBuffer(rawBody);
+      mirrorMetaWebhookToChatArchitecture({
+        rawBody,
+        payload,
+        routeKey: webhookConfig?.routeKey || null,
+      });
       const payloadSummary = Array.isArray(payload?.entry)
         ? payload.entry.reduce(
             (accumulator, entry) => {

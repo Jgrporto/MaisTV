@@ -1,0 +1,27 @@
+[Unit]
+Description=MaisTV Next assignment recovery worker (homologacao)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/MaisTV
+Environment=NODE_ENV=production
+Environment=SQLITE_DB_PATH=/root/MaisTV/server/data/maistv-history.sqlite
+EnvironmentFile=/etc/maistv-next/maistv-next.env
+ExecStart=/usr/bin/env SQLITE_DB_PATH=/root/MaisTV/server/data/maistv-history.sqlite /usr/bin/node server/maistv-assignment-worker.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=maistv-next-assignment-worker
+
+[Install]
+WantedBy=multi-user.target

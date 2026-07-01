@@ -16,12 +16,12 @@ EventSource reconecta automaticamente. SSE é sinal de atualização, não fonte
 Comandos de diagnóstico local:
 
 ```bash
-curl -N -H 'Accept: text/event-stream' -b 'saastv_session=<sessao-de-teste>' http://127.0.0.1:5055/api/events
-curl -fsS http://127.0.0.1:5055/api/health/realtime
-journalctl -u maistv-sse.service -n 200 --no-pager
+curl -N -H 'Accept: text/event-stream' -b 'saastv_session=<sessao-de-teste>' http://127.0.0.1:5356/api/events
+curl -fsS http://127.0.0.1:5356/api/health/realtime
+journalctl -u maistv-next-sse.service -n 200 --no-pager
 ```
 
-Não registre cookies, tokens ou o conteúdo integral de mensagens. O Nginx deve usar `proxy_buffering off`, `proxy_cache off`, `gzip off` e timeout de leitura alto; veja `infra/nginx/maistv-sse.conf`.
+Não registre cookies, tokens ou o conteúdo integral de mensagens. O Nginx deve usar `proxy_buffering off`, `proxy_cache off`, `gzip off` e timeout de leitura alto; veja `infra/nginx/homolog-test.conf`.
 
 ## Uptime Kuma
 

@@ -1,0 +1,20 @@
+import crypto from 'node:crypto';
+import 'dotenv/config';
+
+const args=process.argv.slice(2);
+const valueArg=(name,fallback='')=>{const index=args.indexOf(name);return index>=0?args[index+1]||fallback:fallback;};
+if(!args.includes('--confirm'))throw new Error('Use --confirm for the isolated homologation webhook test.');
+const url=valueArg('--url','http://127.0.0.1:5353/api/webhooks/meta');
+const customerPhone=String(valueArg('--customer','5500000000000')).replace(/\D/g,'');
+const phoneNumberId=String(valueArg('--phone-number-id',process.env.META_PHONE_NUMBER_ID||process.env.WHATSAPP_PHONE_NUMBER_ID||'')).trim();
+const appSecret=String(process.env.META_APP_SECRET||process.env.WHATSAPP_APP_SECRET||'').trim();
+if(!phoneNumberId||!appSecret)throw new Error('META_PHONE_NUMBER_ID and META_APP_SECRET are required.');
+const timestamp=Math.floor(Date.now()/1000);
+const providerMessageId=`wamid.HOMOLOG.${crypto.randomUUID()}`;
+const payload={object:'whatsapp_business_account',entry:[{id:process.env.WHATSAPP_BUSINESS_ACCOUNT_ID||'homolog',changes:[{field:'messages',value:{messaging_product:'whatsapp',metadata:{display_phone_number:process.env.WHATSAPP_DISPLAY_PHONE_NUMBER||'',phone_number_id:phoneNumberId},contacts:[{profile:{name:'Teste Homologacao'},wa_id:customerPhone}],messages:[{from:customerPhone,id:providerMessageId,timestamp:String(timestamp),text:{body:`[HOMOLOG] evento sintetico ${new Date().toISOString()}`},type:'text'}]}}]}]};
+const raw=Buffer.from(JSON.stringify(payload));
+const signature=`sha256=${crypto.createHmac('sha256',appSecret).update(raw).digest('hex')}`;
+const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json','x-hub-signature-256':signature},body:raw});
+const body=await response.text();
+if(!response.ok)throw new Error(`Webhook test failed (${response.status}): ${body}`);
+console.log(JSON.stringify({ok:true,status:response.status,url,providerMessageId,response:body},null,2));

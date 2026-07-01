@@ -9,6 +9,7 @@ import {
 } from '../repositories/messages.repository.mjs';
 import { getConversation } from '../repositories/conversations.repository.mjs';
 import { publishRealtimeEvent } from '../realtime/pubsub.mjs';
+import { resolveMetaConfig } from '../services/meta-config.service.mjs';
 
 await startWorker(QUEUE_NAMES.outbound, async (job) => {
   const { tenantId, messageId } = job.data;
@@ -34,11 +35,13 @@ await startWorker(QUEUE_NAMES.outbound, async (job) => {
     throw new Error(`Outbound message ${message.id} is in uncertain state ${message.status}; automatic resend was blocked to avoid duplication.`);
   }
 
-  const token = process.env.META_ACCESS_TOKEN;
-  const phoneId = process.env.META_PHONE_NUMBER_ID;
+  const routeSelector=conversation.active_route_selector_json||conversation.default_route_selector_json||(Array.isArray(conversation.source_accounts_json)?conversation.source_accounts_json[0]:null)||{};
+  const metaConfig=resolveMetaConfig({phoneNumberId:routeSelector.phoneNumberId||routeSelector.phone_number_id,routeKey:routeSelector.routeKey||routeSelector.route_key});
+  const token = metaConfig.accessToken;
+  const phoneId = metaConfig.phoneNumberId;
   if (!token || !phoneId) {
     await resetMessagePending(tenantId, message.id);
-    throw new Error('META_ACCESS_TOKEN and META_PHONE_NUMBER_ID are required by outbound worker.');
+    throw new Error('No Meta credential mapping is configured for the conversation route.');
   }
 
   let response;

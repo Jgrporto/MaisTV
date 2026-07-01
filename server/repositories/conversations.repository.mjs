@@ -25,12 +25,15 @@ export const getConversation = async (tenantId, id, access = null) => {
   return (await query(`SELECT * FROM conversations WHERE tenant_id=$1 AND id=$2${accessSql}`, values)).rows[0] || null;
 };
 export const upsertInboundConversation = async (client, data) => (await client.query(`INSERT INTO conversations
-  (tenant_id,contact_phone,contact_name,last_message,last_message_type,last_message_at,unread_count,queue_id,service_id,assigned_agent_id)
-  VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,$9) ON CONFLICT (tenant_id,contact_phone) DO UPDATE SET
+  (tenant_id,contact_phone,contact_name,last_message,last_message_type,last_message_at,unread_count,queue_id,service_id,assigned_agent_id,source_accounts_json,active_route_selector_json,default_route_selector_json)
+  VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,$9,$10::jsonb,$11::jsonb,$11::jsonb) ON CONFLICT (tenant_id,contact_phone) DO UPDATE SET
   contact_name=COALESCE(NULLIF(EXCLUDED.contact_name,''),conversations.contact_name),
   queue_id=COALESCE(conversations.queue_id,EXCLUDED.queue_id),service_id=COALESCE(conversations.service_id,EXCLUDED.service_id),
-  assigned_agent_id=COALESCE(conversations.assigned_agent_id,EXCLUDED.assigned_agent_id),updated_at=now() RETURNING *`,
-  [data.tenantId, data.contactPhone, data.contactName || null, data.body || null, data.type, data.createdAt,data.queueId||null,data.serviceId||null,data.assignedAgentId||null])).rows[0];
+  assigned_agent_id=COALESCE(conversations.assigned_agent_id,EXCLUDED.assigned_agent_id),
+  source_accounts_json=CASE WHEN EXCLUDED.source_accounts_json='[]'::jsonb THEN conversations.source_accounts_json ELSE EXCLUDED.source_accounts_json END,
+  active_route_selector_json=COALESCE(EXCLUDED.active_route_selector_json,conversations.active_route_selector_json),
+  default_route_selector_json=COALESCE(conversations.default_route_selector_json,EXCLUDED.default_route_selector_json),updated_at=now() RETURNING *`,
+  [data.tenantId, data.contactPhone, data.contactName || null, data.body || null, data.type, data.createdAt,data.queueId||null,data.serviceId||null,data.assignedAgentId||null,JSON.stringify(data.routeSelector?[data.routeSelector]:[]),data.routeSelector?JSON.stringify(data.routeSelector):null])).rows[0];
 export const updateConversationLastMessage = async (client, conversationId, message) => client.query(`UPDATE conversations SET
   last_message_id=CASE WHEN last_message_at IS NULL OR $5>=last_message_at THEN $2 ELSE last_message_id END,
   last_message=CASE WHEN last_message_at IS NULL OR $5>=last_message_at THEN $3 ELSE last_message END,

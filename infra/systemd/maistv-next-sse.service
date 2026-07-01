@@ -1,19 +1,17 @@
 [Unit]
-Description=MaisTV SSE realtime gateway
-After=network-online.target redis-server.service
+Description=MaisTV Next SSE realtime gateway (homologacao)
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
 Group=root
-WorkingDirectory=/root/SaasTV
+WorkingDirectory=/root/MaisTV
 Environment=NODE_ENV=production
 Environment=SSE_HOST=127.0.0.1
-Environment=SSE_PORT=5055
-Environment=MAISTV_RUNTIME_ROLE=sse
-EnvironmentFile=-/root/SaasTV/.env
-EnvironmentFile=/etc/maistv/chat-stack.env
+Environment=SSE_PORT=5356
+EnvironmentFile=/etc/maistv-next/maistv-next.env
 ExecStart=/usr/bin/node server/realtime/sse-server.mjs
 Restart=on-failure
 RestartSec=5
@@ -24,7 +22,7 @@ PrivateTmp=true
 LimitNOFILE=65535
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=maistv-sse
+SyslogIdentifier=maistv-next-sse
 
 [Install]
 WantedBy=multi-user.target

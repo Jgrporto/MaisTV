@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.homolog.example
 .deploy_timestamp
 .deploy-backups/
 

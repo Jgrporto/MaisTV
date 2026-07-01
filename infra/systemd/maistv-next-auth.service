@@ -1,0 +1,27 @@
+[Unit]
+Description=MaisTV Next auth API (homologacao)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/MaisTV
+Environment=NODE_ENV=production
+Environment=PORT=5355
+EnvironmentFile=/etc/maistv-next/maistv-next.env
+ExecStart=/usr/bin/node server/auth-api.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=maistv-next-auth
+
+[Install]
+WantedBy=multi-user.target

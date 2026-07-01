@@ -135,12 +135,12 @@ docker compose -f docker-compose.infra.yml up -d
 npm run db:migrate:chat
 ```
 
-O cutover permanece desativado por padrao. Depois de migration, backfill e health checks, configure
-`CHAT_ARCHITECTURE_ENABLED=true` e `CHAT_DEFAULT_TENANT_ID` no ambiente do `maistv-api.service`.
+O cutover permanece desativado por padrão. A homologação compartilhada usa `/root/MaisTV`,
+`CHAT_ARCHITECTURE_ENABLED=true` e units `maistv-next-*`, sem substituir a produção em `/root/SaasTV`.
 Para desenvolvimento, use `npm run sse` e os scripts `npm run worker:*`; as rotas REST novas sao
 delegadas pelo `server/local-api.mjs`, sem remover as rotas `/api/whatsapp/*`.
 
-Processos novos são separados em API, SSE e um processo por worker. Os units sugeridos ficam em `infra/systemd`; a configuração SSE do Nginx, com buffering desativado, fica em `infra/nginx/maistv-sse.conf`. A porta interna SSE é `5055`, pois `5054` já atende o Whisper.
+Processos novos são separados em API, SSE e workers. Os units isolados ficam em `infra/systemd`; o vhost de teste fica em `infra/nginx/homolog-test.conf`. Na VPS compartilhada, o SSE usa `5356` porque `5055` pertence à autenticação da SaasTV.
 
 Documentação:
 
@@ -150,5 +150,6 @@ Documentação:
 - Migration e backfill PostgreSQL: `docs/postgres-migration.md`
 - Deploy proposto e Uptime Kuma: `docs/deploy-new-chat-stack.md`
 - Rollback e reconciliação: `docs/rollback-plan.md`
+- Homologação blue-green isolada em `/root/MaisTV`: `docs/maistv-next-blue-green-deploy.md`
 
 Sentry é opcional por `SENTRY_DSN`; sem configuração, a nova camada continua ativa. Bull Board deve permanecer autenticado/restrito. Os artefatos de deploy são sugestões versionadas: nenhuma implantação ou alteração de VPS foi executada nesta entrega.

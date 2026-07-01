@@ -1,0 +1,27 @@
+[Unit]
+Description=MaisTV Next Whisper transcription service (homologacao)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/MaisTV
+Environment=NODE_ENV=production
+Environment=WHISPER_SERVICE_HOST=127.0.0.1
+Environment=WHISPER_SERVICE_PORT=5354
+EnvironmentFile=/etc/maistv-next/maistv-next.env
+ExecStart=/opt/maistv-whisper-venv/bin/python /root/MaisTV/server/whisper-service.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=maistv-next-transcription
+
+[Install]
+WantedBy=multi-user.target
