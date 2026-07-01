@@ -45,6 +45,10 @@ const parseBoolean = (value, fallback) => {
 export const ENABLE_SSE_REALTIME = parseBoolean(import.meta.env.VITE_ENABLE_SSE_REALTIME, false);
 export const ENABLE_CHAT_VIRTUALIZATION = parseBoolean(import.meta.env.VITE_ENABLE_CHAT_VIRTUALIZATION, true);
 export const ENABLE_NEW_CHAT_DATA_LAYER = parseBoolean(import.meta.env.VITE_ENABLE_NEW_CHAT_DATA_LAYER, false);
+export const ENABLE_CHECKOUT_RENEWAL_WORKER = parseBoolean(
+  import.meta.env.VITE_CHECKOUT_RENEWAL_WORKER_ENABLED,
+  true,
+);
 
 export const CONVERSATION_BACKGROUND_SUMMARY_LIMIT = parsePositiveInt(
   import.meta.env.VITE_CONVERSATION_BACKGROUND_SUMMARY_LIMIT,

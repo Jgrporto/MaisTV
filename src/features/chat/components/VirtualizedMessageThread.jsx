@@ -1,11 +1,21 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { ArrowDown } from 'lucide-react';
 import { useChatStore } from '../store/useChatStore';
 
-const ChatScroller = React.forwardRef(function ChatScroller(props, ref) {
+const ChatScroller = React.forwardRef(function ChatScroller({ context: _context, ...props }, ref) {
   return <div {...props} ref={ref} data-chat-overlay-boundary="true" />;
 });
+
+const ChatHeader = ({ context }) => context?.topContent || null;
+const ChatFooter = () => <div className="h-28" aria-hidden="true" />;
+const VIRTUOSO_COMPONENTS = Object.freeze({
+  Scroller: ChatScroller,
+  Header: ChatHeader,
+  Footer: ChatFooter,
+});
+
+const resolveFollowOutput = (atBottom) => atBottom ? 'smooth' : false;
 
 const resolveItemKey = (item, index) => {
   if (item?.type === 'separator') return `separator-${item.label}-${index}`;
@@ -31,6 +41,7 @@ export default function VirtualizedMessageThread({
   const newMessageCount = useChatStore((state) => state.newMessageCount);
   const setIsAtBottom = useChatStore((state) => state.setIsAtBottom);
   const incrementNewMessageCount = useChatStore((state) => state.incrementNewMessageCount);
+  const lastReportedAtBottomRef = useRef(isAtBottom);
 
   useEffect(() => {
     const previousLength = previousLengthRef.current;
@@ -41,10 +52,24 @@ export default function VirtualizedMessageThread({
     previousLengthRef.current = items.length;
   }, [incrementNewMessageCount, isAtBottom, items]);
 
-  const handleAtBottomChange = (nextIsAtBottom) => {
-    setIsAtBottom(nextIsAtBottom);
-    if (stickToBottomRef) stickToBottomRef.current = nextIsAtBottom;
-  };
+  useEffect(() => {
+    lastReportedAtBottomRef.current = isAtBottom;
+  }, [isAtBottom]);
+
+  const handleAtBottomChange = useCallback((nextIsAtBottom) => {
+    const normalized = Boolean(nextIsAtBottom);
+    if (lastReportedAtBottomRef.current !== normalized) {
+      lastReportedAtBottomRef.current = normalized;
+      setIsAtBottom(normalized);
+    }
+    if (stickToBottomRef) stickToBottomRef.current = normalized;
+  }, [setIsAtBottom, stickToBottomRef]);
+
+  const handleStartReached = useCallback(() => {
+    if (hasOlderMessages && !isLoadingOlder) void onLoadOlder?.();
+  }, [hasOlderMessages, isLoadingOlder, onLoadOlder]);
+
+  const virtuosoContext = useMemo(() => ({ topContent }), [topContent]);
 
   const scrollToLatest = () => {
     virtuosoRef.current?.scrollToIndex({ index: Math.max(0, items.length - 1), align: 'end', behavior: 'smooth' });
@@ -62,18 +87,13 @@ export default function VirtualizedMessageThread({
         computeItemKey={(index, item) => resolveItemKey(item, index)}
         itemContent={(index, item) => renderItem(item, index)}
         initialTopMostItemIndex={Math.max(0, items.length - 1)}
-        followOutput={(atBottom) => atBottom ? 'smooth' : false}
+        followOutput={resolveFollowOutput}
         atBottomStateChange={handleAtBottomChange}
-        startReached={() => {
-          if (hasOlderMessages && !isLoadingOlder) void onLoadOlder?.();
-        }}
+        startReached={handleStartReached}
         increaseViewportBy={{ top: 500, bottom: 700 }}
         overscan={500}
-        components={{
-          Scroller: ChatScroller,
-          Header: () => topContent,
-          Footer: () => <div className="h-28" aria-hidden="true" />,
-        }}
+        context={virtuosoContext}
+        components={VIRTUOSO_COMPONENTS}
       />
       {!isAtBottom && newMessageCount > 0 ? (
         <button

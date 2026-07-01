@@ -59,6 +59,7 @@ const next = {
   VITE_ENABLE_NEW_CHAT_DATA_LAYER: 'true',
   VITE_ENABLE_SSE_REALTIME: 'true',
   VITE_ENABLE_CHAT_VIRTUALIZATION: 'true',
+  VITE_CHECKOUT_RENEWAL_WORKER_ENABLED: 'false',
   CHAT_CORS_ORIGINS: 'https://homolog-test.hakione.tech',
   SSE_CORS_ORIGINS: 'https://homolog-test.hakione.tech',
   POSTGRES_HOST: '127.0.0.1',

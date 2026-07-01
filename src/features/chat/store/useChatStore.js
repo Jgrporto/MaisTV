@@ -28,10 +28,15 @@ export const useChatStore = create((set) => ({
   setFilter: (name, value) => set((state) => ({
     filters: { ...state.filters, [name]: resolveUpdate(value, state.filters[name]) },
   })),
-  setIsAtBottom: (isAtBottom) => set({ isAtBottom: Boolean(isAtBottom), ...(isAtBottom ? { newMessageCount: 0 } : {}) }),
+  setIsAtBottom: (isAtBottom) => set((state) => {
+    const nextIsAtBottom = Boolean(isAtBottom);
+    const nextMessageCount = nextIsAtBottom ? 0 : state.newMessageCount;
+    if (state.isAtBottom === nextIsAtBottom && state.newMessageCount === nextMessageCount) return state;
+    return { isAtBottom: nextIsAtBottom, newMessageCount: nextMessageCount };
+  }),
   incrementNewMessageCount: () => set((state) => ({ newMessageCount: state.newMessageCount + 1 })),
   clearNewMessageCount: () => set({ newMessageCount: 0 }),
-  setSseStatus: (sseStatus) => set({ sseStatus }),
+  setSseStatus: (sseStatus) => set((state) => state.sseStatus === sseStatus ? state : { sseStatus }),
   setSidePanel: (update) => set((state) => ({ sidePanel: resolveUpdate(update, state.sidePanel) || null })),
   setPreference: (name, value) => set((state) => ({
     preferences: { ...state.preferences, [name]: resolveUpdate(value, state.preferences[name]) },

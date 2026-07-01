@@ -8,6 +8,7 @@ import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import AppLayout from '@/components/layout/AppLayout';
 import CheckoutRenewalWorkerBridge from '@/components/layout/CheckoutRenewalWorkerBridge';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
+import { ENABLE_CHECKOUT_RENEWAL_WORKER } from '@/lib/performance-config';
 import PageNotFound from '@/lib/PageNotFound';
 import { buildLoginUrl } from '@/lib/local-auth';
 import { canAccessPathname, getFirstAllowedNavigationPath } from '@/lib/navigation-permissions';
@@ -65,7 +66,7 @@ const AppRoutes = () => {
 
   return (
     <>
-      <CheckoutRenewalWorkerBridge enabled={isAuthenticated} />
+      <CheckoutRenewalWorkerBridge enabled={isAuthenticated && ENABLE_CHECKOUT_RENEWAL_WORKER} />
       <Suspense fallback={<LoadingScreen />}>
         <Routes>
           <Route path="/checkout" element={<Checkout />} />
