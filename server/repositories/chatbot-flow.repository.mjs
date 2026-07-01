@@ -32,6 +32,24 @@ const mapVersionRow = (row = {}) => ({
   createdAt: row.created_at,
 });
 
+const mapSessionRow = (row = {}) => (row ? ({
+  id: String(row.id || ''),
+  tenantId: String(row.tenant_id || ''),
+  conversationId: String(row.conversation_id || ''),
+  flowId: row.flow_id == null ? null : String(row.flow_id),
+  flowVersionId: row.flow_version_id == null ? null : String(row.flow_version_id),
+  currentNodeId: row.current_node_id == null ? null : String(row.current_node_id),
+  status: String(row.status || 'active'),
+  state: row.state && typeof row.state === 'object' ? row.state : {},
+  pausedReason: row.paused_reason == null ? null : String(row.paused_reason),
+  pausedBy: row.paused_by == null ? null : String(row.paused_by),
+  lastInboundMessageId: row.last_inbound_message_id == null ? null : String(row.last_inbound_message_id),
+  lastOutboundMessageId: row.last_outbound_message_id == null ? null : String(row.last_outbound_message_id),
+  lastInteractionAt: row.last_interaction_at,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+}) : null);
+
 const mapFlowWithVersionRow = (row = {}) => ({
   ...mapFlowRow(row),
   version: row.version_id
@@ -318,7 +336,17 @@ export const upsertChatbotSession = async ({
     lastInboundMessageId,
     lastOutboundMessageId,
   ]);
-  return result.rows[0] || null;
+  return mapSessionRow(result.rows[0]);
+};
+
+export const findChatbotSessionByConversation = async ({ tenantId, conversationId }) => {
+  const result = await query(`
+    SELECT *
+    FROM chatbot_sessions
+    WHERE tenant_id=$1 AND conversation_id=$2
+    LIMIT 1
+  `, [tenantId, conversationId]);
+  return mapSessionRow(result.rows[0]);
 };
 
 export const recordChatbotEvent = async ({

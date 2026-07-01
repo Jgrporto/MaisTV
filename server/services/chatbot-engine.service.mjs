@@ -150,17 +150,17 @@ export const getNodeById = (flow = {}, nodeId) =>
   (Array.isArray(getState(flow).nodes) ? getState(flow).nodes : [])
     .find((node) => String(node.id) === String(nodeId)) || null;
 
-const getOutgoingEdges = (flow = {}, nodeId) =>
+export const getChatbotOutgoingEdges = (flow = {}, nodeId) =>
   (Array.isArray(getState(flow).edges) ? getState(flow).edges : [])
     .filter((edge) => String(edge.source) === String(nodeId));
 
-const interpolateText = (template = '', variables = {}) =>
+export const interpolateChatbotText = (template = '', variables = {}) =>
   String(template || '').replace(/\{#([A-Za-z0-9_]+)\}/g, (_, key) => {
     const normalizedKey = normalizeVariableKey(key);
     return variables[normalizedKey] != null ? String(variables[normalizedKey]) : '';
   });
 
-const buildDefaultVariables = (conversation = {}) => {
+export const buildDefaultChatbotVariables = (conversation = {}) => {
   const customer = conversation.customer || {};
   const source = customer.sourceCustomer || customer.raw || customer;
   return {
@@ -200,13 +200,13 @@ const describeOutput = (type, payload = {}) => ({ type, ...payload });
 
 export const simulateChatbotFlow = ({ flow, conversation, session = null }) => {
   const variables = {
-    ...buildDefaultVariables(conversation),
+    ...buildDefaultChatbotVariables(conversation),
     ...(session?.variables && typeof session.variables === 'object' ? session.variables : {}),
   };
   const outputs = [];
   const trace = [];
   let nextState = null;
-  let nodeId = session?.nodeId || getOutgoingEdges(flow, CHATBOT_START_NODE_ID)[0]?.target || '';
+  let nodeId = session?.nodeId || getChatbotOutgoingEdges(flow, CHATBOT_START_NODE_ID)[0]?.target || '';
   let guard = 0;
 
   while (nodeId && guard < 50) {
@@ -217,7 +217,7 @@ export const simulateChatbotFlow = ({ flow, conversation, session = null }) => {
       break;
     }
     const data = node.data || {};
-    const outgoingEdges = getOutgoingEdges(flow, node.id);
+    const outgoingEdges = getChatbotOutgoingEdges(flow, node.id);
     let nextNodeId = outgoingEdges[0]?.target || '';
 
     trace.push({
@@ -227,11 +227,13 @@ export const simulateChatbotFlow = ({ flow, conversation, session = null }) => {
     });
 
     if (data.componentType === 'message') {
-      const text = interpolateText(data.text || '', variables);
+      const text = interpolateChatbotText(data.text || '', variables);
       if (data.headerType && data.headerType !== 'none' && data.headerAsset?.dataUrl) {
         outputs.push(describeOutput('media', {
           mediaType: String(data.headerType),
+          mimeType: String(data.headerAsset?.mimeType || 'application/octet-stream'),
           fileName: String(data.headerAsset?.fileName || ''),
+          dataUrl: String(data.headerAsset?.dataUrl || ''),
           caption: text,
         }));
       } else if (text) {
@@ -240,6 +242,8 @@ export const simulateChatbotFlow = ({ flow, conversation, session = null }) => {
     } else if (data.componentType === 'audio' && data.audioAsset?.dataUrl) {
       outputs.push(describeOutput('audio', {
         fileName: String(data.audioAsset?.fileName || data.audioName || ''),
+        mimeType: String(data.audioAsset?.mimeType || 'audio/ogg'),
+        dataUrl: String(data.audioAsset?.dataUrl || ''),
       }));
     } else if (data.componentType === 'label') {
       outputs.push(describeOutput('label', {
@@ -256,7 +260,7 @@ export const simulateChatbotFlow = ({ flow, conversation, session = null }) => {
     } else if (data.componentType === 'variables') {
       for (const variable of Array.isArray(data.variables) ? data.variables : []) {
         const key = normalizeVariableKey(variable.key);
-        if (key) variables[key] = interpolateText(variable.value || '', variables);
+        if (key) variables[key] = interpolateChatbotText(variable.value || '', variables);
       }
       outputs.push(describeOutput('variables', { keys: Object.keys(variables).sort() }));
     } else if (data.componentType === 'redirect') {
@@ -275,11 +279,12 @@ export const simulateChatbotFlow = ({ flow, conversation, session = null }) => {
         .map((edge, index) => ({
           id: String(edge.id || `option-${index + 1}`),
           title: String(edge.data?.description || `Opcao ${index + 1}`).trim(),
+          targetNodeId: String(edge.target || ''),
         }))
         .filter((option) => option.title);
       outputs.push(describeOutput('interactive', {
         displayAs: String(data.displayAs || 'buttons'),
-        text: interpolateText(data.text || data.body || 'Selecione uma opcao:', variables),
+        text: interpolateChatbotText(data.text || data.body || 'Selecione uma opcao:', variables),
         options,
       }));
       nextState = {

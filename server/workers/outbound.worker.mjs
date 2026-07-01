@@ -12,6 +12,72 @@ import { publishRealtimeEvent } from '../realtime/pubsub.mjs';
 import { resolveMetaConfig } from '../services/meta-config.service.mjs';
 import { getLogger } from '../services/logger.service.mjs';
 
+const truncate = (value, max) => String(value || '').trim().slice(0, max);
+
+const buildInteractivePayload = (message) => {
+  const raw = message.raw_json && typeof message.raw_json === 'object' ? message.raw_json : {};
+  const output = raw.chatbotOutput && typeof raw.chatbotOutput === 'object' ? raw.chatbotOutput : raw;
+  const text = truncate(output.text || message.body || 'Selecione uma opcao:', 1024);
+  const options = Array.isArray(output.options) ? output.options : [];
+  const displayAs = String(output.displayAs || '').trim().toLowerCase();
+
+  if (displayAs !== 'list' && options.length <= 3) {
+    return {
+      type: 'interactive',
+      interactive: {
+        type: 'button',
+        body: { text },
+        action: {
+          buttons: options.slice(0, 3).map((option, index) => ({
+            type: 'reply',
+            reply: {
+              id: truncate(option.id || option.targetNodeId || `option-${index + 1}`, 256),
+              title: truncate(option.title || `Opcao ${index + 1}`, 20),
+            },
+          })),
+        },
+      },
+    };
+  }
+
+  return {
+    type: 'interactive',
+    interactive: {
+      type: 'list',
+      body: { text },
+      action: {
+        button: truncate(output.buttonText || 'MENU', 20),
+        sections: [{
+          title: truncate(output.sectionTitle || 'Opcoes', 24),
+          rows: options.slice(0, 10).map((option, index) => ({
+            id: truncate(option.id || option.targetNodeId || `option-${index + 1}`, 200),
+            title: truncate(option.title || `Opcao ${index + 1}`, 24),
+            description: truncate(option.description || '', 72) || undefined,
+          })),
+        }],
+      },
+    },
+  };
+};
+
+const buildMetaMessagePayload = ({ conversation, message }) => {
+  if (message.type === 'interactive') {
+    return {
+      messaging_product: 'whatsapp',
+      to: conversation.contact_phone,
+      ...buildInteractivePayload(message),
+      biz_opaque_callback_data: message.client_message_id,
+    };
+  }
+  return {
+    messaging_product: 'whatsapp',
+    to: conversation.contact_phone,
+    type: 'text',
+    text: { body: message.body },
+    biz_opaque_callback_data: message.client_message_id,
+  };
+};
+
 await startWorker(QUEUE_NAMES.outbound, async (job) => {
   const logger = await getLogger();
   const { tenantId, messageId } = job.data;
@@ -70,13 +136,7 @@ await startWorker(QUEUE_NAMES.outbound, async (job) => {
       {
         method: 'POST',
         headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          to: conversation.contact_phone,
-          type: 'text',
-          text: { body: message.body },
-          biz_opaque_callback_data: message.client_message_id,
-        }),
+        body: JSON.stringify(buildMetaMessagePayload({ conversation, message })),
       },
     );
   } catch (error) {

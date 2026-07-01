@@ -206,7 +206,7 @@ CHATBOT_POSTGRES_OUTBOUND_ENABLED=true
 CHATBOT_POSTGRES_ALLOWED_ROUTES=vendas
 CHATBOT_POSTGRES_ALLOWED_FLOW_IDS=<flow-id>
 CHATBOT_POSTGRES_ALLOW_ASSIGNED_CONVERSATIONS=false
-CHATBOT_POSTGRES_MAX_TEXT_OUTPUTS=1
+CHATBOT_POSTGRES_MAX_OUTPUTS=50
 CHATBOT_POSTGRES_BOT_USER_ID=chatbot-postgres
 ```
 
@@ -214,9 +214,13 @@ Observacoes:
 
 - `CHATBOT_ENABLED=false` deve continuar assim para nao ligar o runtime legado.
 - `CHATBOT_DRY_RUN=true` pode continuar assim para manter o caminho legado em modo seguro; o runtime novo usa as flags `CHATBOT_POSTGRES_*`.
-- Apenas saidas de texto sao enviadas nesta etapa. URA/interativos, audio e midia sao registrados como outputs ignorados.
+- Saidas `text` e `interactive` sao enviadas pela fila outbound nova.
+- Componentes `variables`, `label`, `finish`, `redirect` e `wait` sao processados no estado do chatbot.
+- Componentes `media` e `audio` sao mapeados/auditados; envio real depende de asset compativel com a Cloud API e deve ser homologado por fluxo.
 - O worker `maistv-next-chat-worker@outbound` precisa estar ativo para entregar a mensagem real.
 - O fluxo deve estar `published/is_active=true` e restrito por `CHATBOT_POSTGRES_ALLOWED_FLOW_IDS`.
+
+Para liberar todos os fluxos publicados da rota controlada, deixe `CHATBOT_POSTGRES_ALLOWED_FLOW_IDS` vazio. Para homologacao, prefira liberar um fluxo por vez.
 
 Rollback imediato do teste real:
 

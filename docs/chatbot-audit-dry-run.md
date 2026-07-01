@@ -211,7 +211,7 @@ CHATBOT_POSTGRES_OUTBOUND_ENABLED=true
 CHATBOT_POSTGRES_ALLOWED_ROUTES=vendas
 CHATBOT_POSTGRES_ALLOWED_FLOW_IDS=<flow-id>
 CHATBOT_POSTGRES_ALLOW_ASSIGNED_CONVERSATIONS=false
-CHATBOT_POSTGRES_MAX_TEXT_OUTPUTS=1
+CHATBOT_POSTGRES_MAX_OUTPUTS=50
 ```
 
 O processamento real controlado:
@@ -220,8 +220,11 @@ O processamento real controlado:
 - ignora rotas fora de `CHATBOT_POSTGRES_ALLOWED_ROUTES`;
 - ignora fluxos fora de `CHATBOT_POSTGRES_ALLOWED_FLOW_IDS`;
 - processa somente inbound de texto;
-- cria no maximo `CHATBOT_POSTGRES_MAX_TEXT_OUTPUTS` mensagens de texto;
-- nao envia URA/interativos, midia ou audio nesta etapa;
+- cria no maximo `CHATBOT_POSTGRES_MAX_OUTPUTS` mensagens/outputs por execucao;
+- envia `text` e `interactive` pela fila outbound nova;
+- persiste sessao em `chatbot_sessions` quando parar em URA ou wait;
+- retoma sessao de URA quando o cliente responde com titulo, numero ou id da opcao;
+- mapeia midia/audio e registra no evento, mas o envio real desses assets exige homologacao separada;
 - cria mensagem `pending` e job na fila `outbound`;
 - registra evento em `chatbot_events` com `mode='live'`.
 
