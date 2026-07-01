@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { insertWebhookEvent } from '../repositories/webhook-events.repository.mjs';
+import { insertWebhookEvent,markWebhookFailed } from '../repositories/webhook-events.repository.mjs';
 import { addJob } from '../queues/queues.mjs';
 export const verifyMetaSignature = (rawBody,signature) => {
   const secret=String(process.env.META_APP_SECRET||'');
@@ -19,6 +19,15 @@ export const acceptMetaWebhook = async ({rawBody,payload}) => {
   const tenantId=String(process.env[`META_TENANT_${phoneNumberId}`]||process.env.CHAT_DEFAULT_TENANT_ID||'');
   if (!tenantId) throw Object.assign(new Error(`No tenant mapping for Meta phone_number_id ${phoneNumberId||'(missing)'}.`),{statusCode:422});
   const stored=await insertWebhookEvent({tenantId,phoneNumberId,eventKey:eventKey(payload,rawBody),payload});
-  if (!stored.duplicate) await addJob('inbound','process-webhook',{webhookEventId:stored.event.id,tenantId,payload},{jobId:`webhook:${stored.event.id}`});
+  if (!stored.event) throw Object.assign(new Error('Webhook event could not be persisted or recovered.'),{statusCode:503});
+  const shouldEnqueue=!stored.duplicate||['received','failed'].includes(String(stored.event.status||'received'));
+  if (shouldEnqueue) {
+    try {
+      await addJob('inbound','process-webhook',{webhookEventId:stored.event.id,tenantId,payload:stored.event.payload_json||payload},{jobId:`webhook:${stored.event.id}`});
+    } catch (error) {
+      await markWebhookFailed(stored.event.id,error).catch(()=>{});
+      throw error;
+    }
+  }
   return {accepted:true,duplicate:stored.duplicate};
 };

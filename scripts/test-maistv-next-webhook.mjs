@@ -45,7 +45,7 @@ if (!phoneNumberId || !appSecret) {
 }
 
 const timestamp = Math.floor(Date.now() / 1000);
-const providerMessageId = `wamid.HOMOLOG.${crypto.randomUUID()}`;
+const providerMessageId = valueArg('--provider-message-id', `wamid.HOMOLOG.${crypto.randomUUID()}`);
 const payload = {
   object: 'whatsapp_business_account',
   entry: [{

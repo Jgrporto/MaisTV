@@ -1,6 +1,7 @@
 import { QUEUE_NAMES, DEFAULT_JOB_OPTIONS } from './queue-names.mjs';
 let queuesPromise;
 export const getQueuePrefix = () => String(process.env.BULLMQ_PREFIX || 'maistv').trim() || 'maistv';
+export const normalizeBullMqJobId = (value) => String(value ?? '').trim().replace(/:/g, '-');
 export const getRedisConnectionOptions = () => {
   const url = String(process.env.REDIS_URL || '').trim();
   if (!url) {
@@ -32,7 +33,13 @@ export const getQueues = async () => {
 export const addJob = async (queueKey, name, data, options = {}) => {
   const queues = await getQueues();
   if (!queues[queueKey]) throw new Error(`Unknown queue: ${queueKey}`);
-  return queues[queueKey].add(name,data,{...DEFAULT_JOB_OPTIONS,...options});
+  const nextOptions = {...DEFAULT_JOB_OPTIONS,...options};
+  if (Object.hasOwn(nextOptions,'jobId')) {
+    const normalizedJobId = normalizeBullMqJobId(nextOptions.jobId);
+    if (normalizedJobId) nextOptions.jobId = normalizedJobId;
+    else delete nextOptions.jobId;
+  }
+  return queues[queueKey].add(name,data,nextOptions);
 };
 export const checkQueues = async () => {
   const queues = await getQueues();
