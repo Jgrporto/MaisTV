@@ -137,12 +137,102 @@ function resolveAttachmentType(attachment) {
   return kind || 'document';
 }
 
+const MEDIA_LABEL_TO_KIND = new Map([
+  ['[audio]', 'audio'],
+  ['[image]', 'image'],
+  ['[imagem]', 'image'],
+  ['[video]', 'video'],
+  ['[document]', 'document'],
+  ['[documento]', 'document'],
+  ['[figurinha]', 'image'],
+  ['[sticker]', 'image'],
+]);
+
+const LOADING_MEDIA_STATUSES = new Set(['pending', 'processing', 'queued', 'uploading']);
+
 function isDecorativeMediaLabel(content, attachments) {
-  if (!Array.isArray(attachments) || attachments.length === 0) return false;
   const normalized = String(content || '').trim().toLowerCase();
-  const hasContactAttachment = attachments.some((attachment) => resolveAttachmentType(attachment) === 'contact');
+  const hasContactAttachment = Array.isArray(attachments)
+    ? attachments.some((attachment) => resolveAttachmentType(attachment) === 'contact')
+    : false;
   if (hasContactAttachment && normalized.startsWith('[contato]')) return true;
-  return ['[audio]', '[image]', '[imagem]', '[video]', '[figurinha]', '[sticker]', '[contato]'].includes(normalized);
+  return MEDIA_LABEL_TO_KIND.has(normalized) || normalized === '[contato]';
+}
+
+function normalizeMediaPlaceholderKind(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'sticker' || normalized === 'figurinha') return 'image';
+  if (normalized === 'image' || normalized === 'imagem') return 'image';
+  if (normalized === 'audio') return 'audio';
+  if (normalized === 'video') return 'video';
+  if (normalized === 'document' || normalized === 'documento' || normalized === 'file') return 'document';
+  return null;
+}
+
+function resolvePendingMediaKind(message = {}) {
+  const raw = message?.raw && typeof message.raw === 'object' ? message.raw : {};
+  const candidates = [
+    message.message_type,
+    message.messageType,
+    message.type,
+    raw.message_type,
+    raw.messageType,
+    raw.type,
+  ];
+
+  for (const candidate of candidates) {
+    const kind = normalizeMediaPlaceholderKind(candidate);
+    if (kind) return kind;
+  }
+
+  const normalizedContent = String(message?.content || '').trim().toLowerCase();
+  return MEDIA_LABEL_TO_KIND.get(normalizedContent) || null;
+}
+
+function MediaLoadingPlaceholder({ type = 'document', className = '' }) {
+  const normalizedType = normalizeMediaPlaceholderKind(type) || 'document';
+  const label = normalizedType === 'image'
+    ? 'Carregando imagem'
+    : normalizedType === 'audio'
+      ? 'Carregando audio'
+      : normalizedType === 'video'
+        ? 'Carregando video'
+        : 'Carregando documento';
+
+  if (normalizedType === 'image' || normalizedType === 'video') {
+    return (
+      <div
+        className={cn(
+          'flex h-36 w-64 max-w-full items-center justify-center rounded-xl border border-black/10 bg-black/5',
+          className
+        )}
+        role="status"
+        aria-label={label}
+      >
+        <LoaderCircle className="h-6 w-6 animate-spin opacity-70" />
+      </div>
+    );
+  }
+
+  const Icon = normalizedType === 'audio' ? Headphones : FileText;
+
+  return (
+    <div
+      className={cn(
+        'flex min-h-12 w-full items-center gap-3 rounded-xl border border-black/10 bg-black/5 px-3 py-2',
+        className
+      )}
+      role="status"
+      aria-label={label}
+    >
+      <Icon className="h-4 w-4 flex-shrink-0 opacity-75" />
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <div className="h-2 w-24 max-w-full rounded-full bg-black/10" />
+        <div className="h-2 w-16 max-w-[70%] rounded-full bg-black/10" />
+      </div>
+      <LoaderCircle className="h-4 w-4 flex-shrink-0 animate-spin opacity-70" />
+    </div>
+  );
 }
 
 function getFirstName(value, fallback = 'Mensagem') {
@@ -287,6 +377,8 @@ function AttachmentPreview({
   const isSticker = resolveAttachmentKind(attachment) === 'sticker' || String(attachment?.name || '').trim().toLowerCase() === 'sticker';
   const attachmentUrl = String(attachment?.url || '').trim();
   const mediaId = String(attachment?.mediaId || attachment?.media_id || attachment?.id || '').trim();
+  const mediaStatus = String(attachment?.status || attachment?.mediaStatus || '').trim().toLowerCase();
+  const isMediaLoading = LOADING_MEDIA_STATUSES.has(mediaStatus);
   const resolveMediaSource = mediaId
     ? () => fetchChatMediaUrl(mediaId, attachmentType === 'image' ? 'thumbnail' : 'original')
     : undefined;
@@ -320,6 +412,10 @@ function AttachmentPreview({
     );
   }
 
+  if (isMediaLoading) {
+    return <MediaLoadingPlaceholder type={attachmentType} className="mt-2" />;
+  }
+
   if (!attachmentUrl && !mediaId) return null;
   if (failed) return <BrokenAttachment attachment={attachment} type={attachmentType} />;
 
@@ -329,7 +425,7 @@ function AttachmentPreview({
         className="mt-2"
         sourceUrl={attachmentUrl}
         resolveSource={resolveMediaSource}
-        placeholder={<div className="h-36 w-full animate-pulse rounded-xl bg-black/10" aria-label="Carregando imagem" />}
+        placeholder={<MediaLoadingPlaceholder type="image" />}
       >
         {({ src }) => (
         <button
@@ -802,7 +898,11 @@ export default function ChatMessage({
     normalizedSenderName &&
     !isGenericAgentSenderName(normalizedSenderName) &&
     !isBotMessage;
-  const shouldHideTextContent = isDecorativeMediaLabel(message.content, message.attachments);
+  const messageAttachments = Array.isArray(message.attachments) ? message.attachments : [];
+  const hasAttachments = messageAttachments.length > 0;
+  const pendingMediaKind = hasAttachments ? null : resolvePendingMediaKind(message);
+  const shouldHideTextContent =
+    isDecorativeMediaLabel(message.content, messageAttachments) && (hasAttachments || Boolean(pendingMediaKind));
   const replyPreview = resolveReplyPreview(
     message,
     isAgent ? contactName || 'Cliente' : 'Agente',
@@ -1214,9 +1314,9 @@ export default function ChatMessage({
               </div>
               )}
 
-              {Array.isArray(message.attachments) && message.attachments.length > 0 && (
+              {hasAttachments && (
               <div className="space-y-2">
-                {message.attachments.map((attachment, index) => (
+                {messageAttachments.map((attachment, index) => (
                   <AttachmentPreview
                     key={`${message.id}-attachment-${index}`}
                     attachment={attachment}
@@ -1241,6 +1341,10 @@ export default function ChatMessage({
                 ))}
               </div>
               )}
+
+              {!hasAttachments && pendingMediaKind ? (
+              <MediaLoadingPlaceholder type={pendingMediaKind} className="mt-2" />
+              ) : null}
 
               {message.content && !shouldHideTextContent && (
               <p
