@@ -6,6 +6,8 @@ import { markWebhookProcessed, markWebhookFailed } from '../repositories/webhook
 import { addJob } from '../queues/queues.mjs';
 import { publishRealtimeEvent } from '../realtime/pubsub.mjs';
 import { buildMetaRouteSelector } from './meta-config.service.mjs';
+import { processPostgresChatbotForInbound } from './chatbot-postgres-runtime.service.mjs';
+import { getLogger } from './logger.service.mjs';
 
 const typeOf = (message) => ['image', 'audio', 'video', 'document', 'sticker'].find((type) => message?.[type]) || message?.type || 'text';
 const bodyOf = (message, type) => message?.text?.body || message?.[type]?.caption || message?.button?.text || message?.interactive?.button_reply?.title || '';
@@ -103,6 +105,22 @@ export const processInboundWebhook = async (data) => {
         };
         await publishRealtimeEvent({ ...eventScope, type: 'new_message', data: { conversationId: result.conversation.id, message: result.message, summary: conversationSummary } });
         await publishRealtimeEvent({ ...eventScope, type: 'conversation_updated', data: { conversationId: result.conversation.id, conversation: conversationSummary } });
+        try {
+          await processPostgresChatbotForInbound({
+            tenantId: data.tenantId,
+            item,
+            message: result.message,
+            conversation: result.conversation,
+          });
+        } catch (error) {
+          const logger = await getLogger();
+          logger.error({
+            tenantId: data.tenantId,
+            conversationId: result.conversation.id,
+            messageId: result.message.id,
+            error: error?.message || String(error),
+          }, 'postgres chatbot live runtime failed after inbound persistence');
+        }
       }
     }
     for (const status of normalized.statuses) {

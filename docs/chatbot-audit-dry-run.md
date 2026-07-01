@@ -195,6 +195,44 @@ Todo resultado de dry-run deve manter:
 - `callsMeta: false`;
 - `mutatesMessages: false`.
 
+## Caminho real controlado
+
+Para testar resposta real sem ligar o runtime legado, foi criado um gancho no worker inbound da nova arquitetura. Ele so executa quando todas as travas estao explicitas:
+
+```env
+CHATBOT_ENABLED=false
+CHATBOT_DRY_RUN=true
+CHATBOT_BACKEND_RUNTIME_ENABLED=false
+CHATBOT_FRONTEND_PROCESSING_ENABLED=false
+SUPPORT_FLOW_EXECUTION_ENABLED=false
+CHATBOT_FLOW_SOURCE=postgres
+CHATBOT_POSTGRES_RUNTIME_ENABLED=true
+CHATBOT_POSTGRES_OUTBOUND_ENABLED=true
+CHATBOT_POSTGRES_ALLOWED_ROUTES=vendas
+CHATBOT_POSTGRES_ALLOWED_FLOW_IDS=<flow-id>
+CHATBOT_POSTGRES_ALLOW_ASSIGNED_CONVERSATIONS=false
+CHATBOT_POSTGRES_MAX_TEXT_OUTPUTS=1
+```
+
+O processamento real controlado:
+
+- ignora conversas atribuidas a humano, salvo se `CHATBOT_POSTGRES_ALLOW_ASSIGNED_CONVERSATIONS=true`;
+- ignora rotas fora de `CHATBOT_POSTGRES_ALLOWED_ROUTES`;
+- ignora fluxos fora de `CHATBOT_POSTGRES_ALLOWED_FLOW_IDS`;
+- processa somente inbound de texto;
+- cria no maximo `CHATBOT_POSTGRES_MAX_TEXT_OUTPUTS` mensagens de texto;
+- nao envia URA/interativos, midia ou audio nesta etapa;
+- cria mensagem `pending` e job na fila `outbound`;
+- registra evento em `chatbot_events` com `mode='live'`.
+
+Rollback:
+
+```bash
+CHATBOT_POSTGRES_RUNTIME_ENABLED=false
+CHATBOT_POSTGRES_OUTBOUND_ENABLED=false
+systemctl restart maistv-next-chat-worker@inbound
+```
+
 ## Regras de seguranca
 
 Existentes:

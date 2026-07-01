@@ -178,6 +178,59 @@ Para retornar o fluxo para rascunho:
 npm run chatbot:flows:publish-dry-run -- --flow-id <id> --draft --confirm --json
 ```
 
+## Teste real controlado pelo PostgreSQL
+
+O runtime real legado continua desligado. O teste real controlado usa somente:
+
+```txt
+webhook inbound real
+-> messages/conversations PostgreSQL
+-> engine PostgreSQL
+-> mensagem outbound pending
+-> fila outbound
+-> outbound.worker.mjs
+-> Meta
+```
+
+Flags obrigatorias para um teste real estreito:
+
+```env
+CHATBOT_ENABLED=false
+CHATBOT_DRY_RUN=true
+CHATBOT_BACKEND_RUNTIME_ENABLED=false
+CHATBOT_FRONTEND_PROCESSING_ENABLED=false
+SUPPORT_FLOW_EXECUTION_ENABLED=false
+CHATBOT_FLOW_SOURCE=postgres
+CHATBOT_POSTGRES_RUNTIME_ENABLED=true
+CHATBOT_POSTGRES_OUTBOUND_ENABLED=true
+CHATBOT_POSTGRES_ALLOWED_ROUTES=vendas
+CHATBOT_POSTGRES_ALLOWED_FLOW_IDS=<flow-id>
+CHATBOT_POSTGRES_ALLOW_ASSIGNED_CONVERSATIONS=false
+CHATBOT_POSTGRES_MAX_TEXT_OUTPUTS=1
+CHATBOT_POSTGRES_BOT_USER_ID=chatbot-postgres
+```
+
+Observacoes:
+
+- `CHATBOT_ENABLED=false` deve continuar assim para nao ligar o runtime legado.
+- `CHATBOT_DRY_RUN=true` pode continuar assim para manter o caminho legado em modo seguro; o runtime novo usa as flags `CHATBOT_POSTGRES_*`.
+- Apenas saidas de texto sao enviadas nesta etapa. URA/interativos, audio e midia sao registrados como outputs ignorados.
+- O worker `maistv-next-chat-worker@outbound` precisa estar ativo para entregar a mensagem real.
+- O fluxo deve estar `published/is_active=true` e restrito por `CHATBOT_POSTGRES_ALLOWED_FLOW_IDS`.
+
+Rollback imediato do teste real:
+
+```env
+CHATBOT_POSTGRES_RUNTIME_ENABLED=false
+CHATBOT_POSTGRES_OUTBOUND_ENABLED=false
+```
+
+Depois reinicie o worker inbound:
+
+```bash
+systemctl restart maistv-next-chat-worker@inbound
+```
+
 ## Versionamento
 
 Cada import cria uma linha em `chatbot_flow_versions` com:

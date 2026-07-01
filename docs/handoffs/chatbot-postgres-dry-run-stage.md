@@ -138,4 +138,38 @@ Esta etapa so pode ser aprovada quando:
 
 ## Recomendacao atual
 
-Nao aprovar ativacao real do chatbot. Esta etapa e apenas auditoria, classificacao e dry-run PostgreSQL.
+O teste real controlado pode ser feito apenas pelo runtime PostgreSQL da nova arquitetura, mantendo o runtime legado desligado.
+
+Flags para teste real estreito:
+
+```env
+CHATBOT_ENABLED=false
+CHATBOT_DRY_RUN=true
+CHATBOT_BACKEND_RUNTIME_ENABLED=false
+CHATBOT_FRONTEND_PROCESSING_ENABLED=false
+SUPPORT_FLOW_EXECUTION_ENABLED=false
+CHATBOT_FLOW_SOURCE=postgres
+CHATBOT_POSTGRES_RUNTIME_ENABLED=true
+CHATBOT_POSTGRES_OUTBOUND_ENABLED=true
+CHATBOT_POSTGRES_ALLOWED_ROUTES=vendas
+CHATBOT_POSTGRES_ALLOWED_FLOW_IDS=48573c2e-1a58-4c96-a5d8-053eb183c924
+CHATBOT_POSTGRES_ALLOW_ASSIGNED_CONVERSATIONS=false
+CHATBOT_POSTGRES_MAX_TEXT_OUTPUTS=1
+```
+
+O worker outbound precisa estar ativo para entrega real:
+
+```bash
+systemctl start maistv-next-chat-worker@outbound
+```
+
+Rollback imediato:
+
+```bash
+CHATBOT_POSTGRES_RUNTIME_ENABLED=false
+CHATBOT_POSTGRES_OUTBOUND_ENABLED=false
+systemctl restart maistv-next-chat-worker@inbound
+systemctl stop maistv-next-chat-worker@outbound
+```
+
+Nao ligar `CHATBOT_ENABLED=true` nesta fase.
