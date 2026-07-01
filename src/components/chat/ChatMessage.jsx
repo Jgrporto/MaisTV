@@ -1175,7 +1175,7 @@ export default function ChatMessage({
       ref={containerRef}
       className={cn(
         'flex group',
-        isAgent ? 'justify-end' : 'justify-start',
+        isAgent ? 'justify-end pr-4 sm:pr-5 lg:pr-6' : 'justify-start',
         reactionGroups.length > 0 ? 'mb-3' : 'mb-2',
         (reactionGroups.length > 0 || isReactionMenuOpen) && 'relative z-20'
       )}
@@ -1197,7 +1197,7 @@ export default function ChatMessage({
         />
       )}
 
-      <div className={cn('flex items-end gap-1.5 max-w-[72%]', isAgent && 'flex-row-reverse')}>
+      <div className={cn('flex min-w-0 items-end gap-1.5 max-w-[72%]', isAgent && 'flex-row-reverse')}>
         <div className="relative">
           <MessageContextMenu
             isOpen={isContextMenuOpen}
