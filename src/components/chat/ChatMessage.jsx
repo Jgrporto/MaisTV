@@ -410,7 +410,7 @@ function AttachmentPreview({
             onClick={activate}
           >
             <Headphones className="h-4 w-4" />
-            Carregar audio
+            Reproduzir audio
           </button>
         )}
       >
@@ -419,6 +419,7 @@ function AttachmentPreview({
         <AudioMessagePlayer
           src={src}
           mimeType={attachment?.mimeType || 'audio/ogg'}
+          autoPlay
           className=""
           avatarSrc={mediaItem?.avatarUrl || ''}
           avatarName={mediaItem?.senderName || 'Contato'}

@@ -81,6 +81,14 @@ export function useChatEvents({ selectedConversationId = '' } = {}) {
           return;
         }
 
+        if (eventName === 'media_updated') {
+          if (conversationId) {
+            void queryClient.invalidateQueries({ queryKey: ['chat', 'messages', conversationId] });
+          }
+          dispatchLocalRealtimeEvent('conversation:media-updated', { ...payload, conversationId });
+          return;
+        }
+
         if (conversationId && (eventName === 'conversation_updated' || eventName === 'agent_assigned')) {
           updateConversationCaches(queryClient, conversationId, payload.summary || payload.conversation || payload);
         }

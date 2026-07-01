@@ -34,6 +34,7 @@ import {
 } from '@/lib/conversation-preferences';
 import {
   fetchWhatsappHistoryMessages,
+  fetchChatMediaUrl,
   fetchWhatsappAudioTranscription,
   fetchWhatsappMessages as fetchLegacyWhatsappMessages,
   normalizeWhatsappMessage,
@@ -1228,6 +1229,10 @@ export default function ChatWindow({
           .map((attachment, index) => ({
             id: `${message.id}-attachment-${index}`,
             url: String(attachment?.url || '').trim(),
+            mediaId: String(attachment?.mediaId || attachment?.media_id || attachment?.id || '').trim(),
+            resolveUrl: attachment?.mediaId || attachment?.media_id || attachment?.id
+              ? () => fetchChatMediaUrl(attachment.mediaId || attachment.media_id || attachment.id, 'original')
+              : null,
             name: attachment?.name || message.content || 'Midia',
             mimeType: attachment?.mimeType || '',
             kind: resolveAttachmentKind(attachment) || 'image',
@@ -1235,7 +1240,7 @@ export default function ChatWindow({
             createdDate: message.created_date || message.timestamp || '',
             senderName: message.sender_name || '',
           }))
-          .filter((item) => item.url)
+          .filter((item) => item.url || item.mediaId)
       ),
     [messages]
   );

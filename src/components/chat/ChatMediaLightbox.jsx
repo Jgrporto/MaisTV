@@ -19,17 +19,37 @@ export default function ChatMediaLightbox({
   onActiveIdChange,
 }) {
   const [zoom, setZoom] = useState(1);
+  const [resolvedUrls, setResolvedUrls] = useState({});
+  const [loadError, setLoadError] = useState('');
 
   const activeIndex = useMemo(
     () => items.findIndex((item) => item.id === activeId),
     [activeId, items]
   );
   const activeItem = activeIndex >= 0 ? items[activeIndex] : items[0] || null;
+  const activeUrl = activeItem ? (resolvedUrls[activeItem.id] || activeItem.url || '') : '';
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setResolvedUrls({});
+      return;
+    }
     setZoom(1);
+    setLoadError('');
   }, [activeItem?.id, open]);
+
+  useEffect(() => {
+    if (!open || !activeItem || activeUrl || typeof activeItem.resolveUrl !== 'function') return undefined;
+    let active = true;
+    void activeItem.resolveUrl().then((url) => {
+      if (!active) return;
+      if (!url) throw new Error('URL da midia indisponivel.');
+      setResolvedUrls((current) => ({ ...current, [activeItem.id]: url }));
+    }).catch((error) => {
+      if (active) setLoadError(error?.message || 'Nao foi possivel abrir a midia.');
+    });
+    return () => { active = false; };
+  }, [activeItem, activeUrl, open]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -76,8 +96,8 @@ export default function ChatMediaLightbox({
                 size="sm"
                 className="rounded-full text-white/80 hover:bg-white/10 hover:text-white"
                 onClick={() => {
-                  if (!activeItem.url) return;
-                  window.open(activeItem.url, '_blank', 'noopener,noreferrer');
+                  if (!activeUrl) return;
+                  window.open(activeUrl, '_blank', 'noopener,noreferrer');
                 }}
               >
                 <Download data-icon="inline-start" />
@@ -132,18 +152,22 @@ export default function ChatMediaLightbox({
                   setZoom((currentZoom) => clamp(currentZoom + (event.deltaY < 0 ? 0.12 : -0.12), 1, 4));
                 }}
               >
-                {activeItem.kind === 'video' ? (
+                {!activeUrl ? (
+                  <div className="px-6 text-center text-sm text-white/70">
+                    {loadError || 'Carregando midia...'}
+                  </div>
+                ) : activeItem.kind === 'video' ? (
                   <video
                     controls
                     preload="metadata"
                     className="max-h-full max-w-full rounded-2xl object-contain transition-transform duration-150"
                     style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
                   >
-                    <source src={activeItem.url} type={activeItem.mimeType || 'video/mp4'} />
+                    <source src={activeUrl} type={activeItem.mimeType || 'video/mp4'} />
                   </video>
                 ) : (
                   <img
-                    src={activeItem.url}
+                    src={activeUrl}
                     alt={activeItem.name || 'Midia'}
                     className="max-h-full max-w-full rounded-2xl object-contain transition-transform duration-150"
                     style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
@@ -173,12 +197,14 @@ export default function ChatMediaLightbox({
                     )}
                     onClick={() => onActiveIdChange(item.id)}
                   >
-                    {item.kind === 'video' ? (
-                      <video className="h-16 w-16 object-cover">
+                    {item.url ? (item.kind === 'video' ? (
+                      <video className="h-16 w-16 object-cover" preload="none">
                         <source src={item.url} type={item.mimeType || 'video/mp4'} />
                       </video>
                     ) : (
-                      <img src={item.url} alt={item.name || 'Midia'} className="h-16 w-16 object-cover" />
+                      <img src={item.url} alt={item.name || 'Midia'} loading="lazy" className="h-16 w-16 object-cover" />
+                    )) : (
+                      <div className="flex h-16 w-16 items-center justify-center bg-white/5 text-[10px] text-white/60">Midia</div>
                     )}
                   </button>
                 ))}

@@ -2,9 +2,22 @@ import { query } from '../db/postgres.mjs';
 export const listMessages = async ({ tenantId, conversationId, limit, cursor }) => {
   const values = [tenantId, conversationId];
   let cursorSql = '';
-  if (cursor) { values.push(cursor.at, cursor.id); cursorSql = ` AND (created_at,id) < ($3::timestamptz,$4::uuid)`; }
+  if (cursor) { values.push(cursor.at, cursor.id); cursorSql = ` AND (messages.created_at,messages.id) < ($3::timestamptz,$4::uuid)`; }
   values.push(limit + 1);
-  return (await query(`SELECT * FROM messages WHERE tenant_id=$1 AND conversation_id=$2${cursorSql} ORDER BY created_at DESC,id DESC LIMIT $${values.length}`, values)).rows;
+  return (await query(`SELECT messages.*,
+    media_files.id AS joined_media_id,
+    media_files.type AS media_type,
+    media_files.mime_type AS media_mime_type,
+    media_files.size_bytes AS media_size_bytes,
+    media_files.status AS media_status,
+    media_files.original_filename AS media_original_filename,
+    media_files.thumbnail_key AS media_thumbnail_key,
+    media_files.storage_key AS media_storage_key,
+    media_files.error_message AS media_error_message
+    FROM messages
+    LEFT JOIN media_files ON media_files.tenant_id=messages.tenant_id AND media_files.id=messages.media_id
+    WHERE messages.tenant_id=$1 AND messages.conversation_id=$2${cursorSql}
+    ORDER BY messages.created_at DESC,messages.id DESC LIMIT $${values.length}`, values)).rows;
 };
 export const insertInboundMessage = async (client, data) => (await client.query(`INSERT INTO messages
   (tenant_id,conversation_id,provider_message_id,direction,sender_type,type,body,status,media_id,raw_json,created_at)
@@ -17,6 +30,13 @@ export const insertPendingOutbound = async (data, executor = null) => (await (ex
   ON CONFLICT (tenant_id,client_message_id) DO UPDATE SET client_message_id=EXCLUDED.client_message_id RETURNING *`,
   [data.tenantId,data.conversationId,data.clientMessageId,data.type,data.body || null,JSON.stringify(data.raw || {})])).rows[0];
 export const findMessageById = async (tenantId, id) => (await query('SELECT * FROM messages WHERE tenant_id=$1 AND id=$2', [tenantId,id])).rows[0] || null;
+export const findMessageWithMedia = async (tenantId, id) => (await query(`SELECT messages.*,
+  media_files.storage_key,media_files.mime_type AS media_mime_type,media_files.status AS media_status,
+  media_files.id AS joined_media_id,conversations.assigned_agent_id,conversations.queue_id,conversations.service_id
+  FROM messages
+  JOIN conversations ON conversations.tenant_id=messages.tenant_id AND conversations.id=messages.conversation_id
+  LEFT JOIN media_files ON media_files.tenant_id=messages.tenant_id AND media_files.id=messages.media_id
+  WHERE messages.tenant_id=$1 AND messages.id=$2`, [tenantId,id])).rows[0] || null;
 export const claimMessageForSending = async (tenantId,id) => (await query("UPDATE messages SET status='sending' WHERE tenant_id=$1 AND id=$2 AND status='pending' RETURNING *",[tenantId,id])).rows[0]||null;
 export const resetMessagePending = async (tenantId,id) => query("UPDATE messages SET status='pending' WHERE tenant_id=$1 AND id=$2 AND status='sending'",[tenantId,id]);
 export const markMessageSent = async (tenantId, id, providerMessageId) => query("UPDATE messages SET provider_message_id=$3,status='sent',sent_at=now() WHERE tenant_id=$1 AND id=$2", [tenantId,id,providerMessageId]);

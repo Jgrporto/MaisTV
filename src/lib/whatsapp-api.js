@@ -1240,6 +1240,9 @@ export const reactToWhatsappMessage = async ({ conversationId, messageId, emoji,
 
 export const fetchWhatsappAudioTranscription = async ({ messageId, conversationId, sourceConversationId, identifiers = [] }) => {
   const normalizedMessageId = encodeURIComponent(String(messageId || '').trim());
+  if (ENABLE_NEW_CHAT_DATA_LAYER) {
+    return await requestChatJson(`/api/messages/${normalizedMessageId}/transcription`, { method: 'GET' });
+  }
   const params = new URLSearchParams();
   if (conversationId) params.set('conversationId', String(conversationId));
   if (sourceConversationId) params.set('sourceConversationId', String(sourceConversationId));
@@ -1261,6 +1264,13 @@ export const transcribeWhatsappAudioMessage = async ({
   identifiers = [],
 }) => {
   const normalizedMessageId = encodeURIComponent(String(messageId || '').trim());
+  if (ENABLE_NEW_CHAT_DATA_LAYER) {
+    return await requestChatJson(`/api/messages/${normalizedMessageId}/transcribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force }),
+    });
+  }
   return await requestWhatsappJson(`/api/whatsapp/messages/${normalizedMessageId}/transcribe`, {
     method: 'POST',
     headers: {

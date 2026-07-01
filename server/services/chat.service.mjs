@@ -7,7 +7,19 @@ import { addJob } from '../queues/queues.mjs';
 import { getChatAccessFilter } from './chat-authorization.service.mjs';
 import { withTransaction } from '../db/postgres.mjs';
 import { publishRealtimeEvent } from '../realtime/pubsub.mjs';
-const mediaShape=(row)=>row.media_id?{id:row.media_id,mimeType:null,size:null,thumbnailUrl:null,originalUrl:null,status:'pending'}:null;
+const mediaShape=(row)=>row.media_id?{
+  id:row.joined_media_id||row.media_id,
+  mediaId:row.joined_media_id||row.media_id,
+  type:row.media_type||row.type||'document',
+  name:row.media_original_filename||'',
+  mimeType:row.media_mime_type||null,
+  size:row.media_size_bytes==null?null:Number(row.media_size_bytes),
+  thumbnailUrl:null,
+  originalUrl:null,
+  status:row.media_status||'pending',
+  hasThumbnail:Boolean(row.media_thumbnail_key),
+  error:row.media_error_message||null,
+}:null;
 const CUSTOMER_WINDOW_MS=24*60*60*1000;
 export const shapeConversationSummary=(row,now=Date.now())=>{
   const lastReceivedAt=row.last_received_at||null;
@@ -25,7 +37,7 @@ export const getMessagePage=async({auth,conversationId,limit,before})=>{
   const tenantId=auth.tenantId;const access=getChatAccessFilter(auth);
   if(!await getConversation(tenantId,conversationId,access)) throw Object.assign(new Error('Conversation not found.'),{statusCode:404});
   const pageSize=parseLimit(limit,20,100); const rows=await listMessages({tenantId,conversationId,limit:pageSize,cursor:decodeCursor(before,'message')}); const hasMore=rows.length>pageSize; const selected=rows.slice(0,pageSize); const oldest=selected.at(-1);
-  return {items:selected.reverse().map((r)=>({...r,media:mediaShape(r),raw_json:undefined})),prevCursor:hasMore&&oldest?encodeCursor(oldest):null,hasMore};
+  return {items:selected.reverse().map((r)=>({...r,media:mediaShape(r),transcription:r.transcription_json||null,raw_json:undefined})),prevCursor:hasMore&&oldest?encodeCursor(oldest):null,hasMore};
 };
 export const queueOutboundMessage=async({auth,input})=>{
   const tenantId=auth.tenantId;const userId=auth.userId;const access=getChatAccessFilter(auth);
