@@ -23,6 +23,17 @@ export const useChatStore = create((set) => ({
     const recentConversationIds = selectedId
       ? [selectedId, ...state.recentConversationIds.filter((id) => id !== selectedId)].slice(0, 10)
       : state.recentConversationIds;
+    const hasSameRecentConversationIds =
+      recentConversationIds.length === state.recentConversationIds.length &&
+      recentConversationIds.every((id, index) => id === state.recentConversationIds[index]);
+    if (
+      selectedConversation === state.selectedConversation &&
+      hasSameRecentConversationIds &&
+      state.newMessageCount === 0 &&
+      state.isAtBottom
+    ) {
+      return state;
+    }
     return { selectedConversation, recentConversationIds, newMessageCount: 0, isAtBottom: true };
   }),
   setFilter: (name, value) => set((state) => ({

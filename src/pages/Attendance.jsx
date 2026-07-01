@@ -68,6 +68,27 @@ const DAY_IN_MS = 24 * 60 * 60 * 1000;
 const normalizePhoneDigits = (value) => String(value || '').replace(/\D/g, '');
 const normalizeUserKey = (value) => String(value || '').trim().toLowerCase();
 
+const buildConversationRefreshKey = (conversation) => JSON.stringify([
+  conversation?.id || '',
+  conversation?.contact_name || '',
+  conversation?.contact_phone || '',
+  conversation?.avatar_url || '',
+  conversation?.last_message || '',
+  conversation?.last_message_type || '',
+  conversation?.last_message_at || '',
+  Number(conversation?.unread_count || 0),
+  conversation?.status || '',
+  conversation?.priority || '',
+  conversation?.assigned_agent_id || '',
+  conversation?.assigned_agent_name || '',
+  conversation?.queue_id || '',
+  conversation?.service_id || '',
+  Boolean(conversation?.is_within_customer_window),
+  conversation?.source_accounts || [],
+  conversation?.active_route_selector || null,
+  conversation?.default_route_selector || null,
+]);
+
 const getPauseRemainingMs = (pausedUntil) => {
   const pausedUntilMs = Date.parse(String(pausedUntil || ''));
   return Number.isFinite(pausedUntilMs) ? Math.max(0, pausedUntilMs - Date.now()) : 0;
@@ -611,12 +632,15 @@ export default function Attendance() {
 
     const refreshedConversation = conversations.find((conversation) => conversation.id === selectedConversation.id);
     if (refreshedConversation) {
+      if (buildConversationRefreshKey(refreshedConversation) === buildConversationRefreshKey(selectedConversation)) {
+        return;
+      }
       setSelectedConversation(refreshedConversation);
       return;
     }
 
     setSelectedConversation(null);
-  }, [conversations, selectedConversation?.id]);
+  }, [conversations, selectedConversation, setSelectedConversation]);
 
   const handleSelectConversation = (conv) => {
     setSelectedConversation(conv);
