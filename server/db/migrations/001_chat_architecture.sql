@@ -54,6 +54,7 @@ ALTER TABLE media_files ADD CONSTRAINT media_files_message_id_fkey FOREIGN KEY (
 CREATE UNIQUE INDEX IF NOT EXISTS messages_provider_id_uq ON messages (tenant_id, provider_message_id) WHERE provider_message_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS conversations_tenant_status_cursor_idx ON conversations (tenant_id, status, last_message_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS messages_tenant_conversation_cursor_idx ON messages (tenant_id, conversation_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS messages_latest_inbound_idx ON messages (tenant_id, conversation_id, created_at DESC, id DESC) WHERE direction = 'inbound';
 CREATE INDEX IF NOT EXISTS conversations_tenant_phone_idx ON conversations (tenant_id, contact_phone);
 CREATE INDEX IF NOT EXISTS conversations_tenant_agent_status_idx ON conversations (tenant_id, assigned_agent_id, status);
 CREATE INDEX IF NOT EXISTS conversations_tenant_queue_status_idx ON conversations (tenant_id, queue_id, status);

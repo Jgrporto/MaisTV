@@ -1,18 +1,35 @@
 import { query } from '../db/postgres.mjs';
 export const listConversations = async ({ tenantId, status, limit, cursor, access }) => {
   const values = [tenantId];
-  const where = ['tenant_id=$1'];
+  const where = ['c.tenant_id=$1'];
   if (access && !access.privileged) {
     values.push(access.userId || '');
     const userParam = `$${values.length}`;
     values.push(access.queueIds || []);
     const queueParam = `$${values.length}`;
-    where.push(`(assigned_agent_id=${userParam} OR queue_id=ANY(${queueParam}::text[]) OR service_id=ANY(${queueParam}::text[]))`);
+    where.push(`(c.assigned_agent_id=${userParam} OR c.queue_id=ANY(${queueParam}::text[]) OR c.service_id=ANY(${queueParam}::text[]))`);
   }
-  if (status) { values.push(status); where.push(`status=$${values.length}`); }
-  if (cursor) { values.push(cursor.at, cursor.id); where.push(`(COALESCE(last_message_at,created_at),id) < ($${values.length - 1}::timestamptz,$${values.length}::uuid)`); }
+  if (status) { values.push(status); where.push(`c.status=$${values.length}`); }
+  if (cursor) { values.push(cursor.at, cursor.id); where.push(`(COALESCE(c.last_message_at,c.created_at),c.id) < ($${values.length - 1}::timestamptz,$${values.length}::uuid)`); }
   values.push(limit + 1);
-  const result = await query(`SELECT *, COALESCE(last_message_at,created_at) AS cursor_at FROM conversations WHERE ${where.join(' AND ')} ORDER BY COALESCE(last_message_at,created_at) DESC,id DESC LIMIT $${values.length}`, values);
+  const result = await query(`
+    SELECT c.*,
+      COALESCE(c.last_message_at,c.created_at) AS cursor_at,
+      latest_inbound.last_received_at
+    FROM conversations c
+    LEFT JOIN LATERAL (
+      SELECT m.created_at AS last_received_at
+      FROM messages m
+      WHERE m.tenant_id=c.tenant_id
+        AND m.conversation_id=c.id
+        AND m.direction='inbound'
+      ORDER BY m.created_at DESC,m.id DESC
+      LIMIT 1
+    ) latest_inbound ON true
+    WHERE ${where.join(' AND ')}
+    ORDER BY COALESCE(c.last_message_at,c.created_at) DESC,c.id DESC
+    LIMIT $${values.length}
+  `, values);
   return result.rows;
 };
 export const getConversation = async (tenantId, id, access = null) => {

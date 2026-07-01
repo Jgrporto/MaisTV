@@ -8,11 +8,18 @@ import { getChatAccessFilter } from './chat-authorization.service.mjs';
 import { withTransaction } from '../db/postgres.mjs';
 import { publishRealtimeEvent } from '../realtime/pubsub.mjs';
 const mediaShape=(row)=>row.media_id?{id:row.media_id,mimeType:null,size:null,thumbnailUrl:null,originalUrl:null,status:'pending'}:null;
+const CUSTOMER_WINDOW_MS=24*60*60*1000;
+export const shapeConversationSummary=(row,now=Date.now())=>{
+  const lastReceivedAt=row.last_received_at||null;
+  const lastReceivedAtMs=Date.parse(String(lastReceivedAt||''));
+  const isWithinCustomerWindow=Number.isFinite(lastReceivedAtMs)&&now-lastReceivedAtMs<=CUSTOMER_WINDOW_MS;
+  return {id:row.id,customer_id:row.customer_id,contact_name:row.contact_name,contact_phone:row.contact_phone,avatar_url:row.avatar_url,last_message:row.last_message,last_message_type:row.last_message_type,last_message_at:row.last_message_at,last_received_at:lastReceivedAt,last_client_message_time:lastReceivedAt,unread_count:row.unread_count,status:row.status,priority:row.priority,assigned_agent_id:row.assigned_agent_id,assigned_agent_name:row.assigned_agent_name,queue_id:row.queue_id,service_id:row.service_id,tags:row.tags_json||[],labels:row.labels_json||[],is_pinned:row.is_pinned,manual_unread:row.manual_unread,is_within_customer_window:isWithinCustomerWindow,source_accounts:row.source_accounts_json||[],default_route_selector:row.default_route_selector_json,active_route_selector:row.active_route_selector_json};
+};
 export const getConversationPage=async({auth,limit,cursor,status})=>{
   const tenantId=auth.tenantId;const access=getChatAccessFilter(auth);
   const pageSize=parseLimit(limit,30,50); const decoded=decodeCursor(cursor,'conversation');
   const rows=await listConversations({tenantId,status,limit:pageSize,cursor:decoded,access}); const hasMore=rows.length>pageSize; const items=rows.slice(0,pageSize);
-  return {items:items.map((r)=>({id:r.id,customer_id:r.customer_id,contact_name:r.contact_name,contact_phone:r.contact_phone,avatar_url:r.avatar_url,last_message:r.last_message,last_message_type:r.last_message_type,last_message_at:r.last_message_at,unread_count:r.unread_count,status:r.status,priority:r.priority,assigned_agent_id:r.assigned_agent_id,assigned_agent_name:r.assigned_agent_name,queue_id:r.queue_id,service_id:r.service_id,tags:r.tags_json||[],labels:r.labels_json||[],is_pinned:r.is_pinned,manual_unread:r.manual_unread,is_within_customer_window:null,source_accounts:r.source_accounts_json||[],default_route_selector:r.default_route_selector_json,active_route_selector:r.active_route_selector_json})),nextCursor:hasMore?encodeCursor(items.at(-1),'cursor_at'):null,hasMore};
+  return {items:items.map((r)=>shapeConversationSummary(r)),nextCursor:hasMore?encodeCursor(items.at(-1),'cursor_at'):null,hasMore};
 };
 export const getMessagePage=async({auth,conversationId,limit,before})=>{
   const tenantId=auth.tenantId;const access=getChatAccessFilter(auth);
