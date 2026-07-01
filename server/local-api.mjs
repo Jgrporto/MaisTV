@@ -84,6 +84,11 @@ const IS_ASSIGNMENT_WORKER_ROLE = ['assignment-worker', 'local-assignment-worker
 const LOCAL_API_HTTP_ENABLED =
   String(process.env.LOCAL_API_HTTP_ENABLED || (IS_ROUTINE_WORKER_ROLE || IS_ASSIGNMENT_WORKER_ROLE ? 'false' : 'true')).toLowerCase() !==
   'false';
+const parseEnvBoolean = (value, defaultValue = false) => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) return defaultValue;
+  return ['true', '1', 'yes', 'sim'].includes(normalized);
+};
 const CHAT_ARCHITECTURE_ENABLED = ['true', '1', 'yes', 'sim'].includes(
   String(process.env.CHAT_ARCHITECTURE_ENABLED || '').trim().toLowerCase(),
 );
@@ -633,6 +638,9 @@ const ROUTINE_CHECKOUT_TIMEOUT_MS = Number.parseInt(
   10,
 );
 const CHATBOT_BACKEND_RUNTIME_ENABLED = String(process.env.CHATBOT_BACKEND_RUNTIME_ENABLED || 'true').toLowerCase() !== 'false';
+const CHATBOT_ENABLED = parseEnvBoolean(process.env.CHATBOT_ENABLED, true);
+const CHATBOT_DRY_RUN = parseEnvBoolean(process.env.CHATBOT_DRY_RUN, false);
+const CHATBOT_FLOW_SOURCE = String(process.env.CHATBOT_FLOW_SOURCE || 'legacy').trim().toLowerCase();
 const CHATBOT_BACKEND_POLL_INTERVAL_MS = Number.parseInt(process.env.CHATBOT_BACKEND_POLL_INTERVAL_MS || '30000', 10);
 const CHATBOT_BACKEND_MAX_CANDIDATES = Number.parseInt(process.env.CHATBOT_BACKEND_MAX_CANDIDATES || '8', 10);
 const CHATBOT_FRONTEND_PROCESSING_ENABLED = String(process.env.CHATBOT_FRONTEND_PROCESSING_ENABLED || 'false').toLowerCase() === 'true';
@@ -2228,6 +2236,20 @@ const processChatbotConversationRequest = async (conversation = {}, options = {}
   const cacheKey = `${conversationId}|${requestMessageKey || resolveChatbotProcessCacheKey(conversation)}`;
   pruneChatbotProcessCache();
 
+  if (!CHATBOT_ENABLED && !CHATBOT_DRY_RUN) {
+    return { ok: true, skipped: true, reason: 'chatbot_disabled', mode: 'disabled' };
+  }
+
+  if (CHATBOT_FLOW_SOURCE === 'postgres') {
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'chatbot_postgres_runtime_pending',
+      mode: CHATBOT_DRY_RUN ? 'dry-run' : 'disabled',
+      source: 'postgres',
+    };
+  }
+
   if (chatbotProcessInFlight.has(cacheKey)) {
     chatbotDebugLog(`skipped already_in_flight conversationId=${conversationId || 'missing'}`);
     return { ok: true, skipped: true, reason: 'already_in_flight' };
@@ -2247,6 +2269,28 @@ const processChatbotConversationRequest = async (conversation = {}, options = {}
       messageKey: requestMessageKey,
       timerRun: Boolean(options.timerRun),
     });
+
+    if (CHATBOT_DRY_RUN) {
+      const responseResult = {
+        ...(result || { ok: true, skipped: true }),
+        mode: 'dry-run',
+        dryRun: true,
+      };
+      console.log(JSON.stringify({
+        source: 'chatbot',
+        mode: 'dry-run',
+        conversationId,
+        messageId: requestMessageKey,
+        routeKey: conversation?.meta_route_key || conversation?.metaRouteKey || '',
+        trigger: responseResult.reason || '',
+        flowId: responseResult.flowId || '',
+        wouldSend: responseResult.mutated ? 'not_executed' : '',
+        reason: responseResult.reason || '',
+      }));
+      chatbotProcessCache.set(cacheKey, { at: Date.now(), result: responseResult });
+      pruneChatbotProcessCache();
+      return responseResult;
+    }
 
     if (result?.mutated) {
       await updateStore(async (store) => {
@@ -2272,6 +2316,11 @@ const processChatbotConversationRequest = async (conversation = {}, options = {}
 };
 
 const runChatbotBackendRuntimeOnce = async (options = {}) => {
+  if (!CHATBOT_ENABLED || CHATBOT_DRY_RUN) {
+    chatbotDebugLog(`backend runtime skipped mode=${CHATBOT_ENABLED ? 'dry-run' : 'disabled'}`);
+    return;
+  }
+
   const store = await readStore();
   const runtimeState = buildChatbotRuntimeState(store);
   const executions = store.chatbotExecutions && typeof store.chatbotExecutions === 'object' ? store.chatbotExecutions : {};

@@ -1,0 +1,55 @@
+{
+  "id": "fixture-basic-flow",
+  "code": 1,
+  "name": "Fixture Basic Flow",
+  "active": true,
+  "state": {
+    "nodes": [
+      {
+        "id": "chatbot-start",
+        "type": "chatbotNode",
+        "position": { "x": 40, "y": 120 },
+        "data": {
+          "componentType": "start",
+          "name": "inicio fluxo",
+          "rule": "contains",
+          "triggerValue": "oi"
+        }
+      },
+      {
+        "id": "message-1",
+        "type": "chatbotNode",
+        "position": { "x": 320, "y": 120 },
+        "data": {
+          "componentType": "message",
+          "name": "mensagem_1",
+          "headerType": "none",
+          "text": "Ola! Este e um dry-run seguro."
+        }
+      },
+      {
+        "id": "finish-1",
+        "type": "chatbotNode",
+        "position": { "x": 620, "y": 120 },
+        "data": {
+          "componentType": "finish",
+          "name": "finalizacao_1",
+          "finishType": "resolved"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge-start-message",
+        "source": "chatbot-start",
+        "target": "message-1"
+      },
+      {
+        "id": "edge-message-finish",
+        "source": "message-1",
+        "target": "finish-1"
+      }
+    ],
+    "viewport": { "x": 0, "y": 0, "zoom": 1 }
+  }
+}

@@ -36,6 +36,8 @@
     "storage:test": "node scripts/test-media-storage.mjs",
     "media:failed:report": "node scripts/reprocess-failed-media-jobs.mjs",
     "media:failed:reprocess": "node scripts/reprocess-failed-media-jobs.mjs --confirm",
+    "chatbot:dry-run": "node scripts/chatbot-dry-run.mjs",
+    "chatbot:import-legacy": "node scripts/chatbot-import-legacy.mjs",
     "worker:automations": "node server/workers/automations.worker.mjs",
     "worker:metrics": "node server/workers/metrics.worker.mjs",
     "routine-worker": "node server/maistv-routine-worker.mjs",
