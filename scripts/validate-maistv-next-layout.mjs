@@ -7,6 +7,7 @@ const requiredFiles = [
   'docker-compose.homolog.yml',
   'infra/nginx/homolog-test.conf',
   'infra/nginx/production-webhook-cutover.conf',
+  'infra/nginx/production-webhook-cutover-vendas-only.conf',
   'infra/nginx/production-webhook-cutover-vendas.conf',
   'infra/nginx/production-webhook-cutover-all.conf',
   'infra/systemd/maistv-next-api.service',

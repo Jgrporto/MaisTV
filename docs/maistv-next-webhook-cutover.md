@@ -7,8 +7,9 @@ Este procedimento move somente webhooks oficiais selecionados de `api.maistv.hak
 Estágios disponíveis:
 
 1. `vendas2`: somente `/api/whatsapp/webhook-vendas2`;
-2. `vendas`: mantém `vendas2` e adiciona `/api/whatsapp/webhook-vendas`;
-3. `all`: mantém as anteriores e adiciona `/api/whatsapp/webhook`.
+2. `vendas-only`: somente `/api/whatsapp/webhook-vendas` para teste isolado;
+3. `vendas`: mantém `vendas2` e adiciona `/api/whatsapp/webhook-vendas`;
+4. `all`: mantém as anteriores e adiciona `/api/whatsapp/webhook`.
 
 O include ativo é um symlink em `/etc/nginx/maistv-next-webhook-cutover-enabled/active.conf`. Sem esse symlink, todas as rotas voltam à `location /api/` da SaasTV.
 
@@ -156,6 +157,12 @@ Comando exato de rollback:
 ```bash
 cd /root/MaisTV
 bash scripts/rollback-maistv-next-webhook-cutover.sh --confirm
+```
+
+Para testar somente `vendas`, sem ativar `vendas2`:
+
+```bash
+bash scripts/enable-maistv-next-webhook-cutover.sh --stage vendas-only --confirm
 ```
 
 ## 6. Monitoramento da primeira rota

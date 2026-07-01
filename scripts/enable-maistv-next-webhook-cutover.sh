@@ -17,8 +17,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "${stage}" in
-  vendas2|vendas|all) ;;
-  *) echo "Use --stage vendas2, --stage vendas ou --stage all." >&2; exit 1 ;;
+  vendas2|vendas-only|vendas|all) ;;
+  *) echo "Use --stage vendas2, --stage vendas-only, --stage vendas ou --stage all." >&2; exit 1 ;;
 esac
 [[ ${confirm} == "true" ]] || { echo "Use --confirm para ativar o cutover." >&2; exit 1; }
 

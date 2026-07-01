@@ -32,6 +32,7 @@ fi
 
 cp -a "${site_file}" "${backup_dir}/maistv-api"
 install -m 0644 "${repo_root}/infra/nginx/production-webhook-cutover.conf" "${available_dir}/vendas2.conf"
+install -m 0644 "${repo_root}/infra/nginx/production-webhook-cutover-vendas-only.conf" "${available_dir}/vendas-only.conf"
 install -m 0644 "${repo_root}/infra/nginx/production-webhook-cutover-vendas.conf" "${available_dir}/vendas.conf"
 install -m 0644 "${repo_root}/infra/nginx/production-webhook-cutover-all.conf" "${available_dir}/all.conf"
 
