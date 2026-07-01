@@ -37,17 +37,19 @@ export const findMessageWithMedia = async (tenantId, id) => (await query(`SELECT
   JOIN conversations ON conversations.tenant_id=messages.tenant_id AND conversations.id=messages.conversation_id
   LEFT JOIN media_files ON media_files.tenant_id=messages.tenant_id AND media_files.id=messages.media_id
   WHERE messages.tenant_id=$1 AND messages.id=$2`, [tenantId,id])).rows[0] || null;
-export const claimMessageForSending = async (tenantId,id) => (await query("UPDATE messages SET status='sending' WHERE tenant_id=$1 AND id=$2 AND status='pending' RETURNING *",[tenantId,id])).rows[0]||null;
+export const claimMessageForSending = async (tenantId,id) => (await query("UPDATE messages SET status='sending', error_message=NULL WHERE tenant_id=$1 AND id=$2 AND status='pending' RETURNING *",[tenantId,id])).rows[0]||null;
 export const resetMessagePending = async (tenantId,id) => query("UPDATE messages SET status='pending' WHERE tenant_id=$1 AND id=$2 AND status='sending'",[tenantId,id]);
-export const markMessageSent = async (tenantId, id, providerMessageId) => query("UPDATE messages SET provider_message_id=$3,status='sent',sent_at=now() WHERE tenant_id=$1 AND id=$2", [tenantId,id,providerMessageId]);
+export const markMessageSent = async (tenantId, id, providerMessageId) => query("UPDATE messages SET provider_message_id=$3,status='sent',error_message=NULL,sent_at=now() WHERE tenant_id=$1 AND id=$2", [tenantId,id,providerMessageId]);
+export const markMessageFailed = async (tenantId, id, errorMessage) => query("UPDATE messages SET status='failed',error_message=$3 WHERE tenant_id=$1 AND id=$2", [tenantId,id,String(errorMessage || 'Outbound send failed.').slice(0,2000)]);
 export const recordStatus = async ({ tenantId, providerMessageId, status, raw }) => query(`WITH target AS (SELECT id FROM messages WHERE tenant_id=$1 AND provider_message_id=$2)
   INSERT INTO message_statuses (tenant_id,message_id,provider_message_id,status,raw_json) SELECT $1,id,$2,$3,$4::jsonb FROM target
   ON CONFLICT (tenant_id,provider_message_id,status) DO NOTHING`, [tenantId,providerMessageId,status,JSON.stringify(raw || {})]);
-export const applyStatus = async ({ tenantId, providerMessageId, status }) => query(`UPDATE messages SET status=$3,
+export const applyStatus = async ({ tenantId, providerMessageId, status, raw }) => query(`UPDATE messages SET status=$3,
+  error_message=CASE WHEN $3='failed' THEN $4 ELSE error_message END,
   sent_at=CASE WHEN $3='sent' THEN COALESCE(sent_at,now()) ELSE sent_at END,
   delivered_at=CASE WHEN $3='delivered' THEN COALESCE(delivered_at,now()) ELSE delivered_at END,
   read_at=CASE WHEN $3='read' THEN COALESCE(read_at,now()) ELSE read_at END
   WHERE tenant_id=$1 AND provider_message_id=$2
     AND CASE $3 WHEN 'pending' THEN 0 WHEN 'sent' THEN 1 WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 WHEN 'failed' THEN 4 ELSE -1 END
       >= CASE status WHEN 'pending' THEN 0 WHEN 'sent' THEN 1 WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 WHEN 'failed' THEN 4 ELSE -1 END
-  RETURNING *`, [tenantId,providerMessageId,status]);
+  RETURNING *`, [tenantId,providerMessageId,status,raw?.errors?.[0]?.message || raw?.error?.message || null]);

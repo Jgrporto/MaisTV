@@ -4,26 +4,31 @@ import { startWorker } from './worker-runtime.mjs';
 import {
   claimMessageForSending,
   findMessageById,
+  markMessageFailed,
   markMessageSent,
-  resetMessagePending,
 } from '../repositories/messages.repository.mjs';
 import { getConversation } from '../repositories/conversations.repository.mjs';
 import { publishRealtimeEvent } from '../realtime/pubsub.mjs';
 import { resolveMetaConfig } from '../services/meta-config.service.mjs';
+import { getLogger } from '../services/logger.service.mjs';
 
 await startWorker(QUEUE_NAMES.outbound, async (job) => {
+  const logger = await getLogger();
   const { tenantId, messageId } = job.data;
   const message = await findMessageById(tenantId, messageId);
   if (!message) throw new Error(`Outbound message ${messageId} not found.`);
   const conversation = await getConversation(tenantId, message.conversation_id);
+  const eventScope = {
+    tenantId,
+    conversationId: conversation.id,
+    queueId: conversation.queue_id,
+    assignedAgentId: conversation.assigned_agent_id,
+    customerPhone: conversation.contact_phone,
+  };
 
   if (message.provider_message_id && message.status !== 'pending') {
     await publishRealtimeEvent({
-      tenantId,
-      conversationId: conversation.id,
-      queueId: conversation.queue_id,
-      assignedAgentId: conversation.assigned_agent_id,
-      customerPhone: conversation.contact_phone,
+      ...eventScope,
       type: 'message_status_updated',
       data: { messageId: message.id, status: message.status, providerMessageId: message.provider_message_id },
     });
@@ -39,9 +44,23 @@ await startWorker(QUEUE_NAMES.outbound, async (job) => {
   const metaConfig=resolveMetaConfig({phoneNumberId:routeSelector.phoneNumberId||routeSelector.phone_number_id,routeKey:routeSelector.routeKey||routeSelector.route_key});
   const token = metaConfig.accessToken;
   const phoneId = metaConfig.phoneNumberId;
+  logger.info({
+    tenantId,
+    messageId: message.id,
+    conversationId: conversation.id,
+    routeKey: metaConfig.routeKey,
+    phoneNumberId: phoneId,
+    hasAccessToken: Boolean(token),
+  }, 'outbound route resolved');
   if (!token || !phoneId) {
-    await resetMessagePending(tenantId, message.id);
-    throw new Error('No Meta credential mapping is configured for the conversation route.');
+    const errorMessage = 'No Meta credential mapping is configured for the conversation route.';
+    await markMessageFailed(tenantId, message.id, errorMessage);
+    await publishRealtimeEvent({
+      ...eventScope,
+      type: 'message_status_updated',
+      data: { messageId: message.id, status: 'failed', errorMessage },
+    });
+    return { failed: true, error: errorMessage };
   }
 
   let response;
@@ -68,8 +87,24 @@ await startWorker(QUEUE_NAMES.outbound, async (job) => {
 
   const payload = await response.json();
   if (!response.ok) {
-    await resetMessagePending(tenantId, message.id);
-    throw new Error(`Meta send failed (${response.status}): ${payload?.error?.message || 'unknown error'}`);
+    const errorMessage = `Meta send failed (${response.status}): ${payload?.error?.message || 'unknown error'}`;
+    await markMessageFailed(tenantId, message.id, errorMessage);
+    await publishRealtimeEvent({
+      ...eventScope,
+      type: 'message_status_updated',
+      data: { messageId: message.id, status: 'failed', errorMessage },
+    });
+    logger.warn({
+      tenantId,
+      messageId: message.id,
+      conversationId: conversation.id,
+      routeKey: metaConfig.routeKey,
+      phoneNumberId: phoneId,
+      statusCode: response.status,
+      metaErrorCode: payload?.error?.code,
+      metaErrorSubcode: payload?.error?.error_subcode,
+    }, 'outbound meta send failed');
+    return { failed: true, error: errorMessage };
   }
 
   const providerMessageId = payload.messages?.[0]?.id;
@@ -78,12 +113,16 @@ await startWorker(QUEUE_NAMES.outbound, async (job) => {
   }
 
   await markMessageSent(tenantId, message.id, providerMessageId);
-  await publishRealtimeEvent({
+  logger.info({
     tenantId,
+    messageId: message.id,
     conversationId: conversation.id,
-    queueId: conversation.queue_id,
-    assignedAgentId: conversation.assigned_agent_id,
-    customerPhone: conversation.contact_phone,
+    routeKey: metaConfig.routeKey,
+    phoneNumberId: phoneId,
+    providerMessageId,
+  }, 'outbound meta send succeeded');
+  await publishRealtimeEvent({
+    ...eventScope,
     type: 'message_status_updated',
     data: { messageId: message.id, status: 'sent', providerMessageId },
   });
