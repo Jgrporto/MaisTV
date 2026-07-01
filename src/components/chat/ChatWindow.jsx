@@ -3145,7 +3145,7 @@ export default function ChatWindow({
               isLoadingOlder={isLoadingOlder || isLoadingHistory}
               scrollerRef={setScrollContainerElement}
               stickToBottomRef={stickToBottomRef}
-              className="chat-thread-surface attendance-scrollbar relative z-0 h-full px-4 pt-4 space-y-0.5"
+              className="chat-thread-surface attendance-scrollbar relative z-0 h-full overflow-x-hidden pl-4 pr-7 pt-4 space-y-0.5"
               style={{
                 background:
                   'radial-gradient(circle at top left, hsl(var(--primary) / 0.12) 0%, transparent 36%), linear-gradient(180deg, hsl(var(--wa-background)) 0%, hsl(var(--background)) 100%)',
@@ -3167,7 +3167,7 @@ export default function ChatWindow({
           <div
           ref={scrollContainerRef}
           data-chat-overlay-boundary="true"
-          className="chat-thread-surface attendance-scrollbar relative z-0 h-full overflow-y-auto px-4 pt-4 pb-28 space-y-0.5"
+          className="chat-thread-surface attendance-scrollbar relative z-0 h-full overflow-y-auto overflow-x-hidden pl-4 pr-7 pt-4 pb-28 space-y-0.5"
           style={{
             background:
               'radial-gradient(circle at top left, hsl(var(--primary) / 0.12) 0%, transparent 36%), linear-gradient(180deg, hsl(var(--wa-background)) 0%, hsl(var(--background)) 100%)',
@@ -3211,7 +3211,7 @@ export default function ChatWindow({
           </div>
           )}
 
-          <div className="absolute inset-x-0 bottom-0 z-30">
+          <div className="absolute inset-x-0 bottom-0 z-30 pr-3">
           <MessageInput
             value={draftValue}
             onValueChange={handleDraftValueChange}

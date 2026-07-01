@@ -4,7 +4,7 @@ import { ArrowDown } from 'lucide-react';
 import { useChatStore } from '../store/useChatStore';
 
 const ChatScroller = React.forwardRef(function ChatScroller({ context: _context, ...props }, ref) {
-  return <div {...props} ref={ref} data-chat-overlay-boundary="true" />;
+  return <div {...props} ref={ref} data-chat-overlay-boundary="true" style={{ ...props.style, overflowX: 'hidden' }} />;
 });
 
 const ChatHeader = ({ context }) => context?.topContent || null;
