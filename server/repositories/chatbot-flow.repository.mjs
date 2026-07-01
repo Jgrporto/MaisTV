@@ -220,6 +220,58 @@ export const publishChatbotFlowVersion = async ({ tenantId, flowId, versionId, i
   return result;
 };
 
+export const publishChatbotFlowForDryRun = async ({
+  tenantId,
+  flowId,
+  routeKey,
+  updatedBy = 'chatbot-publish-dry-run',
+}) => withTransaction(async (client) => {
+  const currentResult = await client.query(`
+    SELECT *
+    FROM chatbot_flows
+    WHERE tenant_id=$1 AND id=$2
+    FOR UPDATE
+  `, [tenantId, flowId]);
+  const current = currentResult.rows[0];
+  if (!current?.current_version_id) return null;
+
+  await client.query(`
+    UPDATE chatbot_flow_versions
+    SET published_at=COALESCE(published_at, now())
+    WHERE tenant_id=$1 AND flow_id=$2 AND id=$3
+  `, [tenantId, flowId, current.current_version_id]);
+
+  const flowResult = await client.query(`
+    UPDATE chatbot_flows
+    SET status='published',
+      is_active=true,
+      route_key=$3,
+      updated_by=$4,
+      updated_at=now()
+    WHERE tenant_id=$1 AND id=$2
+    RETURNING *
+  `, [tenantId, flowId, routeKey || null, updatedBy || null]);
+
+  return flowResult.rows[0] ? mapFlowRow(flowResult.rows[0]) : null;
+});
+
+export const moveChatbotFlowToDraft = async ({
+  tenantId,
+  flowId,
+  updatedBy = 'chatbot-publish-dry-run',
+}) => {
+  const result = await query(`
+    UPDATE chatbot_flows
+    SET status='draft',
+      is_active=false,
+      updated_by=$3,
+      updated_at=now()
+    WHERE tenant_id=$1 AND id=$2
+    RETURNING *
+  `, [tenantId, flowId, updatedBy || null]);
+  return result.rows[0] ? mapFlowRow(result.rows[0]) : null;
+};
+
 export const upsertChatbotSession = async ({
   tenantId,
   conversationId,

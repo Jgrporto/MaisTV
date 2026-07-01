@@ -97,6 +97,104 @@ npm run chatbot:dry-run -- --route vendas --all
 
 O script le o store via JSON ou `readJsonBackedStore`, gera inventario dos flows e mostra `wouldSend` sem chamada externa.
 
+## Auditoria PostgreSQL dos fluxos importados
+
+Depois da migration `005_chatbot_postgres_storage.sql` e da importacao dos 14 fluxos como `draft`, a auditoria oficial deve ler o PostgreSQL:
+
+```bash
+npm run chatbot:flows:report -- --source postgres --json
+npm run chatbot:flows:validate -- --source postgres --json
+```
+
+O relatorio lista, por fluxo:
+
+- id, nome, status, `is_active`, `route_key`, versao atual e checksum;
+- quantidade de nos, respostas, condicoes e delays;
+- gatilho;
+- uso de midia;
+- uso de template/HSM;
+- handoff humano;
+- fallback;
+- encerramento;
+- origem legado;
+- problemas e classificacao de risco.
+
+O validador aponta bloqueadores como:
+
+- fluxo sem no inicial;
+- referencia quebrada para no inexistente;
+- possivel loop sem limite;
+- fluxo sem fallback;
+- fluxo sem handoff humano;
+- delay perigoso;
+- template sem nome;
+- midia sem arquivo;
+- fluxo sem `route_key`;
+- referencia a rota legada `/api/whatsapp/send-*`.
+
+Classificacao:
+
+- `baixo risco`: fluxo simples, sem delay/template/midia e com handoff.
+- `medio risco`: multiplas etapas, condicao, etiqueta ou fallback.
+- `alto risco`: muitas mensagens, delay, template, cobranca/venda/reconquista.
+- `bloqueado`: bloqueador estrutural ou regra de seguranca violada.
+
+Observacao: como os 14 fluxos foram importados sem rota, o validador deve apontar `missing_route_key` ate que um unico fluxo seja escolhido para dry-run e publicado com rota controlada.
+
+## Publicacao controlada para dry-run
+
+Para permitir que o dry-run encontre exatamente um fluxo ativo no PostgreSQL, existe um comando especifico:
+
+```bash
+npm run chatbot:flows:publish-dry-run -- --flow-id <id> --route vendas --confirm --json
+```
+
+Ele exige as flags seguras no ambiente:
+
+```env
+CHATBOT_ENABLED=false
+CHATBOT_DRY_RUN=true
+CHATBOT_BACKEND_RUNTIME_ENABLED=false
+CHATBOT_FRONTEND_PROCESSING_ENABLED=false
+SUPPORT_FLOW_EXECUTION_ENABLED=false
+CHATBOT_FLOW_SOURCE=postgres
+```
+
+O comando:
+
+- exige `--confirm` para alterar banco;
+- publica apenas o flow informado;
+- define `status='published'`, `is_active=true` e `route_key=<route>`;
+- recusa publicar se ja existir outro flow `published/is_active`;
+- recusa `alto risco` ou `bloqueado` sem `--force-risk`;
+- nao chama Meta;
+- nao cria outbound;
+- nao envia mensagem real.
+
+Para voltar o fluxo escolhido para `draft` ao final:
+
+```bash
+npm run chatbot:flows:publish-dry-run -- --flow-id <id> --draft --confirm --json
+```
+
+Com um fluxo publicado apenas para dry-run, as simulacoes esperadas sao:
+
+```bash
+npm run chatbot:dry-run -- --route vendas --text "oi" --source postgres --json
+npm run chatbot:dry-run -- --route vendas --text "ola" --source postgres --json
+npm run chatbot:dry-run -- --route vendas --text "quero contratar" --source postgres --json
+npm run chatbot:dry-run -- --route vendas --text "suporte" --source postgres --json
+npm run chatbot:dry-run -- --route vendas --text "falar com atendente" --source postgres --json
+npm run chatbot:dry-run -- --route vendas --text "nao entendi" --source postgres --json
+npm run chatbot:dry-run -- --route vendas2 --text "oi" --source postgres --json
+```
+
+Todo resultado de dry-run deve manter:
+
+- `createsOutboundJob: false`;
+- `callsMeta: false`;
+- `mutatesMessages: false`.
+
 ## Regras de seguranca
 
 Existentes:

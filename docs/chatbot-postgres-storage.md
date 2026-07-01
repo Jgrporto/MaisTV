@@ -108,6 +108,76 @@ O dry-run retorna:
 - `wouldSend`;
 - garantias de que nao criou outbound, nao chamou Meta e nao alterou mensagens.
 
+## Auditoria e homologacao dos 14 fluxos
+
+Depois da importacao como `draft`, use:
+
+```bash
+npm run chatbot:flows:report -- --source postgres --json
+npm run chatbot:flows:validate -- --source postgres --json
+```
+
+`chatbot:flows:report` gera o inventario completo dos fluxos importados:
+
+- id, nome, status, rota, versao e checksum;
+- gatilho;
+- contagens de nos, respostas, condicoes e delays;
+- midia, template/HSM, handoff, fallback e encerramento;
+- origem legado;
+- classificacao de risco;
+- problemas encontrados.
+
+`chatbot:flows:validate` usa a mesma auditoria, mas retorna codigo `2` se houver bloqueadores, exceto com `--allow-blocked`. Isso e esperado enquanto todos os fluxos estiverem sem `route_key` e sem revisao manual de fallback/handoff.
+
+Classificacoes possiveis:
+
+- `baixo risco`;
+- `medio risco`;
+- `alto risco`;
+- `bloqueado`.
+
+## Publicacao de 1 fluxo apenas para dry-run
+
+Para simular um fluxo ativo sem ligar runtime real, publique apenas um fluxo seguro:
+
+```bash
+npm run chatbot:flows:publish-dry-run -- --flow-id <id> --route vendas --confirm --json
+```
+
+O comando so altera o PostgreSQL se:
+
+- `--confirm` estiver presente;
+- as flags de seguranca estiverem configuradas;
+- nao existir outro flow `published/is_active`;
+- o fluxo nao estiver classificado como `alto risco` ou `bloqueado`, a menos que `--force-risk` seja usado conscientemente.
+
+Flags obrigatorias:
+
+```env
+CHATBOT_ENABLED=false
+CHATBOT_DRY_RUN=true
+CHATBOT_BACKEND_RUNTIME_ENABLED=false
+CHATBOT_FRONTEND_PROCESSING_ENABLED=false
+SUPPORT_FLOW_EXECUTION_ENABLED=false
+CHATBOT_FLOW_SOURCE=postgres
+```
+
+O comando define somente:
+
+```sql
+status = 'published'
+is_active = true
+route_key = '<route>'
+```
+
+Ele nao liga chatbot real, nao envia mensagem, nao chama Meta e nao cria job outbound.
+
+Para retornar o fluxo para rascunho:
+
+```bash
+npm run chatbot:flows:publish-dry-run -- --flow-id <id> --draft --confirm --json
+```
+
 ## Versionamento
 
 Cada import cria uma linha em `chatbot_flow_versions` com:
