@@ -13,6 +13,7 @@ import {
   updateMessageStatusCache,
 } from '../cache-updaters';
 import { useChatStore } from '../store/useChatStore';
+import { markChatConversationRead } from '@/lib/whatsapp-api';
 
 const EVENT_NAMES = [
   'new_message',
@@ -20,6 +21,7 @@ const EVENT_NAMES = [
   'message_status_updated',
   'queue_updated',
   'agent_assigned',
+  'presence_updated',
   'media_updated',
   'conversation_read',
 ];
@@ -70,6 +72,9 @@ export function useChatEvents({ selectedConversationId = '' } = {}) {
             const isSelectedConversation = String(conversationId) === String(selectedConversationIdRef.current);
             const senderType = String(message.sender_type || message.senderType || message.direction || '').trim().toLowerCase();
             const isInboundMessage = senderType === 'client' || senderType === 'customer' || senderType === 'inbound';
+            if (isSelectedConversation && isInboundMessage) {
+              void markChatConversationRead(conversationId, { lastReadMessageId: message.id || null }).catch(() => {});
+            }
             const activityPatch = payload.summary || {
               last_message: message.body || message.content || '',
               last_message_type: message.type || message.message_type || 'text',
@@ -105,6 +110,12 @@ export function useChatEvents({ selectedConversationId = '' } = {}) {
           return;
         }
 
+        if (eventName === 'presence_updated') {
+          void queryClient.invalidateQueries({ queryKey: ['presence'] });
+          dispatchLocalRealtimeEvent('presence:updated', payload);
+          return;
+        }
+
         if (eventName === 'conversation_read') {
           if (conversationId) {
             markConversationReadCaches(queryClient, conversationId, payload.unreadCount ?? payload.unread_count ?? 0);
@@ -113,7 +124,7 @@ export function useChatEvents({ selectedConversationId = '' } = {}) {
           return;
         }
 
-        if (conversationId && (eventName === 'conversation_updated' || eventName === 'agent_assigned')) {
+        if (conversationId && (eventName === 'conversation_updated' || eventName === 'agent_assigned' || eventName === 'queue_updated')) {
           const patch = payload.summary || payload.conversation || payload;
           updateConversationCaches(queryClient, conversationId, (currentConversation = {}) => {
             const currentUnread = Number(currentConversation.unread_count || currentConversation.unreadCount || 0);
@@ -125,6 +136,9 @@ export function useChatEvents({ selectedConversationId = '' } = {}) {
               isUnread: unreadCount > 0,
             };
           });
+          if (eventName === 'agent_assigned' || eventName === 'queue_updated') {
+            dispatchLocalRealtimeEvent('conversation:assignment-updated', { ...payload, conversationId });
+          }
         }
       };
       handlers.set(eventName, handler);

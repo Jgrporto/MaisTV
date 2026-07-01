@@ -1,7 +1,7 @@
 import { createSubscriber } from './pubsub.mjs';
 import { getConversation } from '../repositories/conversations.repository.mjs';
 import { getChatAccessFilter } from '../services/chat-authorization.service.mjs';
-const ALLOWED_EVENTS = new Set(['new_message','conversation_updated','message_status_updated','queue_updated','agent_assigned','media_updated','conversation_read']);
+const ALLOWED_EVENTS = new Set(['new_message','conversation_updated','message_status_updated','queue_updated','agent_assigned','presence_updated','media_updated','conversation_read']);
 const clients = new Set();
 let subscriberPromise;
 const heartbeatMs = Math.max(5_000, Number(process.env.SSE_HEARTBEAT_MS || 25_000));
@@ -15,10 +15,6 @@ const ensureSubscriber = async () => {
       let payload; try { payload=JSON.parse(raw); } catch { return; }
       if (!ALLOWED_EVENTS.has(payload.type)) return;
       for (const client of clients) {
-        if (payload.type==='conversation_read') {
-          const eventUserId=String(payload.data?.userId||payload.data?.user_id||payload.scope?.userId||'').trim();
-          if (!eventUserId || eventUserId!==String(client.auth.userId||'')) continue;
-        }
         const scope=payload.scope||{};
         const privileged = (Array.isArray(client.auth.roles) ? client.auth.roles : [])
           .some((role)=>['admin','administrador'].includes(String(role).trim().toLowerCase()));

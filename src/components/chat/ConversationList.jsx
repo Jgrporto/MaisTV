@@ -225,7 +225,7 @@ export default function ConversationList({
     String(currentUser?.role_name || '').trim().toLowerCase() === 'administrador';
   const visibleTabs = isAdminUser
     ? TABS
-    : TABS.filter((tab) => !['queue', 'resolved'].includes(tab.value));
+    : TABS.filter((tab) => tab.value !== 'resolved');
   const nonAdminUsers = useMemo(
     () =>
       (Array.isArray(teamUsers) ? teamUsers : []).filter((user) => {

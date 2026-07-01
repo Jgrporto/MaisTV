@@ -4,6 +4,7 @@ import { resolveEffectiveUser } from '@/lib/current-user';
 import { buildLoginUrl, fetchLocalAuthMe, loginLocalUser, logoutLocalUser } from '@/lib/local-auth';
 import { subscribeToLocalAuthUnauthorized } from '@/lib/local-api';
 import { AUTH_REFRESH_INTERVAL_MS } from '@/lib/performance-config';
+import { stopAttendancePresence } from '@/lib/presence-api';
 
 const AuthContext = createContext();
 
@@ -105,6 +106,11 @@ export const AuthProvider = ({ children }) => {
 
   const logout = useCallback(
     async (shouldRedirect = true) => {
+      try {
+        await stopAttendancePresence({ recoverAssignments: false, reason: 'logout' });
+      } catch {
+        // logout local continua mesmo se a presenca PostgreSQL estiver indisponivel
+      }
       try {
         await logoutLocalUser();
       } catch {

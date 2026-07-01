@@ -5,6 +5,7 @@ import { createWebhookRouter } from './webhook.routes.mjs';
 import { createHealthRouter } from './health.routes.mjs';
 import { createSseRouter } from './sse.routes.mjs';
 import { createBullBoardRouter } from './bull-board.routes.mjs';
+import { createAssignmentRouter } from './assignment.routes.mjs';
 import { getLogger } from '../services/logger.service.mjs';
 import { initSentry } from '../observability/index.mjs';
 export const registerChatArchitecture=async(app,{resolveSession,includeSse=true,includeBullBoard=true}={})=>{
@@ -20,7 +21,7 @@ export const registerChatArchitecture=async(app,{resolveSession,includeSse=true,
     return next();
   });
   app.use('/api',await createWebhookRouter()); app.use('/api',await createHealthRouter());
-  app.use('/api',await createChatRouter({authMiddleware:auth})); app.use('/api',await createMediaRouter({authMiddleware:auth}));
+  app.use('/api',await createChatRouter({authMiddleware:auth})); app.use('/api',await createAssignmentRouter({authMiddleware:auth})); app.use('/api',await createMediaRouter({authMiddleware:auth}));
   if(includeSse)app.use('/api',await createSseRouter({authMiddleware:auth}));
   if(includeBullBoard){try{app.use('/admin/queues',await createBullBoardRouter({authMiddleware:adminAuth}));}catch(error){app.get('/admin/queues',adminAuth,(_req,res)=>res.status(503).json({ok:false,error:error.message}));}}
   return app;

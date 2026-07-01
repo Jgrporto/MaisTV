@@ -1,14 +1,9 @@
 import crypto from 'node:crypto';
 import { decodeCursor,encodeCursor,parseLimit } from './cursor.service.mjs';
-import { listConversations,getConversation } from '../repositories/conversations.repository.mjs';
+import { listConversations,getConversation,markConversationReadGlobal } from '../repositories/conversations.repository.mjs';
 import { listMessages,insertPendingOutbound } from '../repositories/messages.repository.mjs';
 import { updateConversationLastOutbound } from '../repositories/conversations.repository.mjs';
-import {
-  countUnreadForUser,
-  findLatestConversationMessage,
-  findMessageReadCursor,
-  upsertConversationRead,
-} from '../repositories/conversation-reads.repository.mjs';
+import { findLatestConversationMessage,findMessageReadCursor } from '../repositories/conversation-reads.repository.mjs';
 import { addJob } from '../queues/queues.mjs';
 import { getChatAccessFilter } from './chat-authorization.service.mjs';
 import { withTransaction } from '../db/postgres.mjs';
@@ -32,7 +27,7 @@ export const shapeConversationSummary=(row,now=Date.now())=>{
   const lastReceivedAtMs=Date.parse(String(lastReceivedAt||''));
   const isWithinCustomerWindow=Number.isFinite(lastReceivedAtMs)&&now-lastReceivedAtMs<=CUSTOMER_WINDOW_MS;
   const userUnreadCount=Number.isFinite(Number(row.user_unread_count))?Number(row.user_unread_count):Number(row.unread_count||0);
-  return {id:row.id,customer_id:row.customer_id,contact_name:row.contact_name,contact_phone:row.contact_phone,avatar_url:row.avatar_url,last_message:row.last_message,last_message_type:row.last_message_type,last_message_at:row.last_message_at,last_received_at:lastReceivedAt,last_client_message_time:lastReceivedAt,unread_count:userUnreadCount,unreadCount:userUnreadCount,isUnread:userUnreadCount>0,status:row.status,priority:row.priority,assigned_agent_id:row.assigned_agent_id,assigned_agent_name:row.assigned_agent_name,queue_id:row.queue_id,service_id:row.service_id,tags:row.tags_json||[],labels:row.labels_json||[],is_pinned:row.is_pinned,manual_unread:row.manual_unread,is_within_customer_window:isWithinCustomerWindow,source_accounts:row.source_accounts_json||[],default_route_selector:row.default_route_selector_json,active_route_selector:row.active_route_selector_json};
+  return {id:row.id,customer_id:row.customer_id,contact_name:row.contact_name,contact_phone:row.contact_phone,avatar_url:row.avatar_url,last_message:row.last_message,last_message_type:row.last_message_type,last_message_at:row.last_message_at,last_received_at:lastReceivedAt,last_client_message_time:lastReceivedAt,unread_count:userUnreadCount,unreadCount:userUnreadCount,isUnread:userUnreadCount>0,status:row.status,priority:row.priority,assigned_agent_id:row.assigned_agent_id,assigned_agent_name:row.assigned_agent_name,assigned_at:row.assigned_at,assignment_status:row.assignment_status,last_assignment_at:row.last_assignment_at,queue_id:row.queue_id,service_id:row.service_id,route_key:row.route_key,phone_number_id:row.phone_number_id,last_read_at:row.last_read_at,last_read_by:row.last_read_by,tags:row.tags_json||[],labels:row.labels_json||[],is_pinned:row.is_pinned,manual_unread:row.manual_unread,is_within_customer_window:isWithinCustomerWindow,source_accounts:row.source_accounts_json||[],default_route_selector:row.default_route_selector_json,active_route_selector:row.active_route_selector_json};
 };
 export const getConversationPage=async({auth,limit,cursor,status})=>{
   const tenantId=auth.tenantId;const access=getChatAccessFilter(auth);
@@ -78,31 +73,24 @@ export const markConversationRead=async({auth,conversationId,input={}})=>{
       ? await findMessageReadCursor({tenantId,conversationId,userId,messageId:requestedMessageId},client)
       : await findLatestConversationMessage({tenantId,conversationId},client);
     const lastReadAt=cursor?.created_at||new Date().toISOString();
-    const read=await upsertConversationRead({
-      tenantId,
-      conversationId,
-      userId,
-      lastReadMessageId:cursor?.id||null,
-      lastReadAt,
-    },client);
-    const unreadCount=await countUnreadForUser({tenantId,conversationId,userId},client);
-    return {read,unreadCount};
+    const updated=await markConversationReadGlobal(client,{tenantId,conversationId,userId,lastReadMessageId:cursor?.id||null,lastReadAt});
+    return {updated,unreadCount:0,lastReadAt,lastReadMessageId:cursor?.id||null};
   });
   const data={
     conversationId,
     userId,
     unreadCount:result.unreadCount,
     unread_count:result.unreadCount,
-    lastReadAt:result.read.last_read_at,
-    last_read_at:result.read.last_read_at,
-    lastReadMessageId:result.read.last_read_message_id,
-    last_read_message_id:result.read.last_read_message_id,
+    lastReadAt:result.lastReadAt,
+    last_read_at:result.lastReadAt,
+    lastReadMessageId:result.lastReadMessageId,
+    last_read_message_id:result.lastReadMessageId,
   };
   await publishRealtimeEvent({
     tenantId,
-    userId,
     conversationId,
     queueId:conversation.queue_id,
+    assignedAgentId:conversation.assigned_agent_id,
     customerPhone:conversation.contact_phone,
     type:'conversation_read',
     data,

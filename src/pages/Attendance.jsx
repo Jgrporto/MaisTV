@@ -357,6 +357,10 @@ export default function Attendance() {
         // A tela continua carregando mesmo se a presenca falhar; as queries mostram o estado real.
       });
 
+    const presenceHeartbeatId = window.setInterval(() => {
+      void startAttendancePresence().catch(() => {});
+    }, 30_000);
+
     const refreshAttendanceConversations = () => {
       scheduleQueryInvalidation(queryClient, { queryKey: ['conversations', 'attendance'] });
       scheduleQueryInvalidation(queryClient, { queryKey: ['presence', 'attending-users'] });
@@ -408,6 +412,7 @@ export default function Attendance() {
 
     return () => {
       cancelled = true;
+      window.clearInterval(presenceHeartbeatId);
       unsubscribe();
     };
   }, [effectiveUser?.id, queryClient]);

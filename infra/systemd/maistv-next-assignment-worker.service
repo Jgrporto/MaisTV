@@ -1,5 +1,5 @@
 [Unit]
-Description=MaisTV Next assignment recovery worker (homologacao)
+Description=MaisTV Next PostgreSQL conversation assignment worker (homologacao)
 After=network-online.target
 Wants=network-online.target
 
@@ -9,9 +9,10 @@ User=root
 Group=root
 WorkingDirectory=/root/MaisTV
 Environment=NODE_ENV=production
-Environment=SQLITE_DB_PATH=/root/MaisTV/server/data/maistv-history.sqlite
+Environment=ASSIGNMENT_WORKER_ENABLED=true
+Environment=ASSIGNMENT_ALLOWED_ROUTES=vendas
 EnvironmentFile=/etc/maistv-next/maistv-next.env
-ExecStart=/usr/bin/env SQLITE_DB_PATH=/root/MaisTV/server/data/maistv-history.sqlite /usr/bin/node server/maistv-assignment-worker.mjs
+ExecStart=/usr/bin/env ASSIGNMENT_WORKER_ENABLED=true ASSIGNMENT_ALLOWED_ROUTES=vendas /usr/bin/node server/workers/assignment.worker.mjs
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=60

@@ -1,4 +1,4 @@
-import { parseJsonResponse, requestLocalApi } from '@/lib/local-api';
+import { requestChatJson } from '@/features/chat/api/chat-api';
 
 const normalizeStringArray = (value) =>
   Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : [];
@@ -10,7 +10,7 @@ export const assignConversationToUser = async (conversationId, userId, options =
     throw new Error('Conversa ou usuario invalido para redirecionamento.');
   }
 
-  const response = await requestLocalApi(`/conversations/${encodeURIComponent(safeConversationId)}/assign`, {
+  return requestChatJson(`/api/conversations/${encodeURIComponent(safeConversationId)}/assign`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -21,13 +21,6 @@ export const assignConversationToUser = async (conversationId, userId, options =
       matchingServiceIds: normalizeStringArray(options.matchingServiceIds),
     }),
   });
-  const data = await parseJsonResponse(response);
-
-  if (!response.ok) {
-    throw new Error(data?.error || 'Nao foi possivel redirecionar a conversa.');
-  }
-
-  return data;
 };
 
 export const requeueConversationForService = async (conversationId, options = {}) => {
@@ -36,7 +29,7 @@ export const requeueConversationForService = async (conversationId, options = {}
     throw new Error('Conversa invalida para envio a fila.');
   }
 
-  const response = await requestLocalApi(`/conversations/${encodeURIComponent(safeConversationId)}/requeue`, {
+  return requestChatJson(`/api/conversations/${encodeURIComponent(safeConversationId)}/unassign`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -44,14 +37,22 @@ export const requeueConversationForService = async (conversationId, options = {}
     body: JSON.stringify({
       sourceConversationIds: normalizeStringArray(options.sourceConversationIds),
       matchingServiceIds: normalizeStringArray(options.matchingServiceIds),
-      targetServiceId: String(options.targetServiceId || '').trim(),
+      queueId: String(options.targetServiceId || '').trim(),
     }),
   });
-  const data = await parseJsonResponse(response);
+};
 
-  if (!response.ok) {
-    throw new Error(data?.error || 'Nao foi possivel enviar a conversa para a fila.');
-  }
-
-  return data;
+export const transferConversationToUser = async (conversationId, userId, options = {}) => {
+  const safeConversationId = String(conversationId || '').trim();
+  const safeUserId = String(userId || '').trim();
+  if (!safeConversationId || !safeUserId) throw new Error('Conversa ou usuario invalido para transferencia.');
+  return requestChatJson(`/api/conversations/${encodeURIComponent(safeConversationId)}/transfer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      userId: safeUserId,
+      queueId: String(options.targetServiceId || options.queueId || '').trim(),
+      reason: String(options.reason || 'manual_transfer').trim(),
+    }),
+  });
 };

@@ -99,7 +99,7 @@ export const resolveConversationAssignmentStatus = ({
   services = [],
 } = {}) => {
   const safeConversation = conversation && typeof conversation === 'object' ? conversation : {};
-  const queueStatus = normalizeKey(safeConversation.queue_status);
+  const queueStatus = normalizeKey(safeConversation.queue_status || safeConversation.assignment_status);
   const assignmentSource = normalizeKey(safeConversation.assignment_source);
   const sourceLabel = ASSIGNMENT_SOURCE_LABELS[assignmentSource] || '';
   const serviceName = resolveServiceName(safeConversation, services);

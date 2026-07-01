@@ -8,6 +8,8 @@ import { publishRealtimeEvent } from '../realtime/pubsub.mjs';
 import { buildMetaRouteSelector } from './meta-config.service.mjs';
 import { processPostgresChatbotForInbound } from './chatbot-postgres-runtime.service.mjs';
 import { getLogger } from './logger.service.mjs';
+import { resolveRouteQueueMapping } from '../repositories/assignment.repository.mjs';
+import { queueConversationAssignment } from './assignment.service.mjs';
 
 const typeOf = (message) => ['image', 'audio', 'video', 'document', 'sticker'].find((type) => message?.[type]) || message?.type || 'text';
 const bodyOf = (message, type) => message?.text?.body
@@ -66,15 +68,29 @@ export const processInboundWebhook = async (data) => {
   const normalized = normalizeMetaPayload(data.payload);
   try {
     for (const item of normalized.messages) {
+      const routeKey = String(item.routeSelector?.routeKey || item.routeSelector?.route_key || 'default').trim().toLowerCase();
+      const mapping = await resolveRouteQueueMapping({
+        tenantId: data.tenantId,
+        routeKey,
+        phoneNumberId: item.phoneNumberId,
+        fallbackQueueId: item.queueId,
+        fallbackServiceId: item.serviceId,
+      });
+      const routedItem = {
+        ...item,
+        routeKey,
+        queueId: mapping?.queue_id || item.queueId || null,
+        serviceId: mapping?.service_id || item.serviceId || null,
+      };
       const result = await withTransaction(async (client) => {
-        const conversation = await upsertInboundConversation(client, { ...item, tenantId: data.tenantId });
-        const media = item.media ? await upsertMediaMetadata(client, {
-          ...item.media,
+        const conversation = await upsertInboundConversation(client, { ...routedItem, tenantId: data.tenantId });
+        const media = routedItem.media ? await upsertMediaMetadata(client, {
+          ...routedItem.media,
           tenantId: data.tenantId,
           conversationId: conversation.id,
         }) : null;
         const message = await insertInboundMessage(client, {
-          ...item,
+          ...routedItem,
           tenantId: data.tenantId,
           conversationId: conversation.id,
           mediaId: media?.id,
@@ -116,7 +132,7 @@ export const processInboundWebhook = async (data) => {
         try {
           await processPostgresChatbotForInbound({
             tenantId: data.tenantId,
-            item,
+            item: routedItem,
             message: result.message,
             conversation: result.conversation,
           });
@@ -128,6 +144,14 @@ export const processInboundWebhook = async (data) => {
             messageId: result.message.id,
             error: error?.message || String(error),
           }, 'postgres chatbot live runtime failed after inbound persistence');
+        }
+        if (!result.conversation.assigned_agent_id && ['queued', 'unassigned'].includes(result.conversation.assignment_status || 'unassigned')) {
+          await queueConversationAssignment({
+            tenantId: data.tenantId,
+            conversationId: result.conversation.id,
+            inboundMessageId: result.message.id,
+            routeKey,
+          });
         }
       }
     }
