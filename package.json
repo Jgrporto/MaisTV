@@ -146,5 +146,8 @@
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.2",
     "vite": "^6.1.0"
+  },
+  "overrides": {
+    "@radix-ui/react-presence": "1.1.6"
   }
 }
