@@ -10,7 +10,15 @@ import { processPostgresChatbotForInbound } from './chatbot-postgres-runtime.ser
 import { getLogger } from './logger.service.mjs';
 
 const typeOf = (message) => ['image', 'audio', 'video', 'document', 'sticker'].find((type) => message?.[type]) || message?.type || 'text';
-const bodyOf = (message, type) => message?.text?.body || message?.[type]?.caption || message?.button?.text || message?.interactive?.button_reply?.title || '';
+const bodyOf = (message, type) => message?.text?.body
+  || message?.[type]?.caption
+  || message?.button?.text
+  || message?.button?.payload
+  || message?.interactive?.button_reply?.title
+  || message?.interactive?.button_reply?.id
+  || message?.interactive?.list_reply?.title
+  || message?.interactive?.list_reply?.id
+  || '';
 const routingValue = (prefix, phoneNumberId, fallback) => process.env[`${prefix}_${String(phoneNumberId || '').replace(/\D/g, '')}`] || process.env[fallback] || null;
 
 export const normalizeMetaPayload = (payload) => {

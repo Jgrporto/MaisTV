@@ -39,6 +39,7 @@ const normalizeRuntimeFlow = (flow = {}) => {
     versionId: flow.version?.id || '',
     version: flow.version?.version || 0,
     checksum: flow.version?.checksum || '',
+    updatedAt: flow.updatedAt,
     definition,
   };
 };

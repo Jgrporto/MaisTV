@@ -191,10 +191,46 @@ export const evaluateChatbotRule = (rule, sourceValue, expectedValue) => {
 };
 
 export const findMatchingChatbotFlow = (flows = [], text = '') =>
-  (Array.isArray(flows) ? flows : []).find((flow) => {
-    const trigger = flow.triggerConfig || extractTriggerConfig(flow.definition || flow.version?.definition || {});
-    return evaluateChatbotRule(trigger.rule || 'contains', text, trigger.triggerValue || '');
-  }) || null;
+  selectChatbotFlowWinner(flows, text).winner;
+
+const triggerSpecificity = (flow = {}) => {
+  const trigger = flow.triggerConfig || extractTriggerConfig(flow.definition || flow.version?.definition || {});
+  const rule = String(trigger.rule || 'contains').trim().toLowerCase();
+  const valueLength = normalizeChatbotText(trigger.triggerValue || '').length;
+  const ruleRank = rule === 'equals' ? 4 : rule === 'contains' ? 3 : ['gte', 'gt', 'lte', 'lt'].includes(rule) ? 2 : 1;
+  return { ruleRank, valueLength };
+};
+
+export const selectChatbotFlowWinner = (flows = [], text = '', routeKey = null) => {
+  const candidates = (Array.isArray(flows) ? flows : [])
+    .filter((flow) => {
+      const trigger = flow.triggerConfig || extractTriggerConfig(flow.definition || flow.version?.definition || {});
+      return evaluateChatbotRule(trigger.rule || 'contains', text, trigger.triggerValue || '');
+    })
+    .map((flow) => ({ flow, specificity: triggerSpecificity(flow) }))
+    .sort((left, right) => {
+      const priorityDifference = Number(left.flow.priority ?? 100) - Number(right.flow.priority ?? 100);
+      if (priorityDifference) return priorityDifference;
+      if (left.specificity.ruleRank !== right.specificity.ruleRank) return right.specificity.ruleRank - left.specificity.ruleRank;
+      if (left.specificity.valueLength !== right.specificity.valueLength) return right.specificity.valueLength - left.specificity.valueLength;
+      const leftExactRoute = routeKey && normalizeChatbotText(left.flow.routeKey) === normalizeChatbotText(routeKey) ? 1 : 0;
+      const rightExactRoute = routeKey && normalizeChatbotText(right.flow.routeKey) === normalizeChatbotText(routeKey) ? 1 : 0;
+      if (leftExactRoute !== rightExactRoute) return rightExactRoute - leftExactRoute;
+      const versionDifference = Number(right.flow.version || 0) - Number(left.flow.version || 0);
+      if (versionDifference) return versionDifference;
+      const updatedDifference = Date.parse(right.flow.updatedAt || 0) - Date.parse(left.flow.updatedAt || 0);
+      if (Number.isFinite(updatedDifference) && updatedDifference) return updatedDifference;
+      return String(left.flow.id || '').localeCompare(String(right.flow.id || ''));
+    });
+  return {
+    winner: candidates[0]?.flow || null,
+    candidates: candidates.map(({ flow, specificity }) => ({
+      flow,
+      specificity,
+      selected: flow.id === candidates[0]?.flow?.id,
+    })),
+  };
+};
 
 const describeOutput = (type, payload = {}) => ({ type, ...payload });
 

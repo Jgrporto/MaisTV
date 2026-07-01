@@ -11,6 +11,11 @@ import { getConversation } from '../repositories/conversations.repository.mjs';
 import { publishRealtimeEvent } from '../realtime/pubsub.mjs';
 import { resolveMetaConfig } from '../services/meta-config.service.mjs';
 import { getLogger } from '../services/logger.service.mjs';
+import {
+  getChatbotOutboundPermission,
+  handleChatbotOutboundFailed,
+  handleChatbotOutboundSent,
+} from '../services/chatbot-sequence.service.mjs';
 
 const truncate = (value, max) => String(value || '').trim().slice(0, max);
 
@@ -92,7 +97,17 @@ await startWorker(QUEUE_NAMES.outbound, async (job) => {
     customerPhone: conversation.contact_phone,
   };
 
+  if (message.status === 'failed') {
+    await handleChatbotOutboundFailed({ tenantId, message, error: message.error_message || 'Outbound message already failed.' });
+    return { failed: true, alreadyFailed: true, error: message.error_message || 'Outbound message already failed.' };
+  }
+
   if (message.provider_message_id && message.status !== 'pending') {
+    if (message.status === 'failed') {
+      await handleChatbotOutboundFailed({ tenantId, message, error: message.error_message || 'Provider marked message as failed.' });
+    } else {
+      await handleChatbotOutboundSent({ tenantId, message });
+    }
     await publishRealtimeEvent({
       ...eventScope,
       type: 'message_status_updated',
@@ -121,6 +136,7 @@ await startWorker(QUEUE_NAMES.outbound, async (job) => {
   if (!token || !phoneId) {
     const errorMessage = 'No Meta credential mapping is configured for the conversation route.';
     await markMessageFailed(tenantId, message.id, errorMessage);
+    await handleChatbotOutboundFailed({ tenantId, message, error: errorMessage });
     await publishRealtimeEvent({
       ...eventScope,
       type: 'message_status_updated',
@@ -142,13 +158,39 @@ await startWorker(QUEUE_NAMES.outbound, async (job) => {
   } catch (error) {
     // A transport failure is ambiguous: Meta may have accepted the request. Keep
     // status=sending so BullMQ retries cannot send the same client_message_id again.
-    throw new Error(`Meta send outcome is uncertain; automatic resend blocked: ${error.message}`, { cause: error });
+    const uncertainError = new Error(`Meta send outcome is uncertain; automatic resend blocked: ${error.message}`, { cause: error });
+    await handleChatbotOutboundFailed({ tenantId, message, error: uncertainError });
+    throw uncertainError;
   }
 
-  const payload = await response.json();
+  let payload;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    const uncertainError = new Error(`Meta response could not be parsed; automatic resend blocked: ${error.message}`, { cause: error });
+    await handleChatbotOutboundFailed({ tenantId, message, error: uncertainError });
+    throw uncertainError;
+  }
+
+  const chatbotPermission = await getChatbotOutboundPermission({ tenantId, message });
+  if (!chatbotPermission.allowed) {
+    const errorMessage = `Chatbot output blocked: ${chatbotPermission.reason}.`;
+    await markMessageFailed(tenantId, message.id, errorMessage);
+    await handleChatbotOutboundFailed({ tenantId, message, error: errorMessage });
+    logger.warn({
+      tenantId,
+      messageId: message.id,
+      conversationId: conversation.id,
+      batchId: chatbotPermission.batchId,
+      outputIndex: chatbotPermission.outputIndex,
+      reason: chatbotPermission.reason,
+    }, 'blocked stale chatbot outbound job');
+    return { failed: true, blocked: true, error: errorMessage };
+  }
   if (!response.ok) {
     const errorMessage = `Meta send failed (${response.status}): ${payload?.error?.message || 'unknown error'}`;
     await markMessageFailed(tenantId, message.id, errorMessage);
+    await handleChatbotOutboundFailed({ tenantId, message, error: errorMessage });
     await publishRealtimeEvent({
       ...eventScope,
       type: 'message_status_updated',
@@ -169,10 +211,16 @@ await startWorker(QUEUE_NAMES.outbound, async (job) => {
 
   const providerMessageId = payload.messages?.[0]?.id;
   if (!providerMessageId) {
-    throw new Error('Meta accepted the request without a message id; automatic resend blocked.');
+    const error = new Error('Meta accepted the request without a message id; automatic resend blocked.');
+    await handleChatbotOutboundFailed({ tenantId, message, error });
+    throw error;
   }
 
   await markMessageSent(tenantId, message.id, providerMessageId);
+  await handleChatbotOutboundSent({
+    tenantId,
+    message: { ...message, status: 'sent', provider_message_id: providerMessageId },
+  });
   logger.info({
     tenantId,
     messageId: message.id,

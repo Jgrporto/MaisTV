@@ -37,6 +37,8 @@
     "media:failed:report": "node scripts/reprocess-failed-media-jobs.mjs",
     "media:failed:reprocess": "node scripts/reprocess-failed-media-jobs.mjs --confirm",
     "chatbot:dry-run": "node scripts/chatbot-dry-run.mjs",
+    "chatbot:sequence:test": "node --test server/services/chatbot-sequencing.test.mjs",
+    "chatbot:sequence:report": "node scripts/chatbot-sequence-report.mjs",
     "chatbot:import-legacy": "node scripts/chatbot-import-legacy.mjs",
     "chatbot:flows:report": "node scripts/chatbot-flows-report.mjs",
     "chatbot:flows:validate": "node scripts/chatbot-flows-validate.mjs",

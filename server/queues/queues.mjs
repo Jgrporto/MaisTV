@@ -47,3 +47,9 @@ export const checkQueues = async () => {
   for (const [key,queue] of Object.entries(queues)) counts[key] = await queue.getJobCounts('waiting','active','failed','delayed');
   return { ok:true, counts };
 };
+export const closeQueues = async () => {
+  if (!queuesPromise) return;
+  const queues = await queuesPromise;
+  queuesPromise = undefined;
+  await Promise.all(Object.values(queues).map((queue) => queue.close()));
+};

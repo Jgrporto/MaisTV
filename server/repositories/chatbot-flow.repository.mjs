@@ -302,8 +302,8 @@ export const upsertChatbotSession = async ({
   pausedBy = null,
   lastInboundMessageId = null,
   lastOutboundMessageId = null,
-}) => {
-  const result = await query(`
+}, executor = null) => {
+  const result = await (executor || { query }).query(`
     INSERT INTO chatbot_sessions (
       tenant_id, conversation_id, flow_id, flow_version_id, current_node_id,
       status, state, paused_reason, paused_by, last_inbound_message_id,
@@ -349,6 +349,17 @@ export const findChatbotSessionByConversation = async ({ tenantId, conversationI
   return mapSessionRow(result.rows[0]);
 };
 
+export const findChatbotSessionByConversationForUpdate = async ({ tenantId, conversationId }, executor) => {
+  const result = await executor.query(`
+    SELECT *
+    FROM chatbot_sessions
+    WHERE tenant_id=$1 AND conversation_id=$2
+    LIMIT 1
+    FOR UPDATE
+  `, [tenantId, conversationId]);
+  return mapSessionRow(result.rows[0]);
+};
+
 export const recordChatbotEvent = async ({
   tenantId,
   conversationId = null,
@@ -359,8 +370,8 @@ export const recordChatbotEvent = async ({
   eventType,
   mode = 'dry-run',
   payload = {},
-}) => {
-  const result = await query(`
+}, executor = null) => {
+  const result = await (executor || { query }).query(`
     INSERT INTO chatbot_events (
       tenant_id, conversation_id, message_id, flow_id, flow_version_id,
       session_id, event_type, mode, payload
