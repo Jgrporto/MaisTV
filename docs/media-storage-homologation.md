@@ -31,7 +31,7 @@ URLs assinadas sao acessadas pelo navegador. Configure CORS no bucket para permi
   {
     "AllowedOrigins": ["https://homolog-test.hakione.tech"],
     "AllowedMethods": ["GET", "HEAD"],
-    "AllowedHeaders": ["Range", "If-None-Match", "If-Modified-Since"],
+    "AllowedHeaders": ["Range", "If-None-Match", "If-Modified-Since", "Content-Type"],
     "ExposeHeaders": ["ETag", "Content-Length", "Content-Range", "Accept-Ranges", "Content-Type"],
     "MaxAgeSeconds": 3600
   }
