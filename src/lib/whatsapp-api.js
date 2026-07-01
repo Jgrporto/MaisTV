@@ -807,6 +807,18 @@ export const fetchChatMessagesPage = async (conversationId, options = {}) => {
   };
 };
 
+export const markChatConversationRead = async (conversationId, options = {}) => {
+  const safeConversationId = String(conversationId || '').trim();
+  if (!safeConversationId) return null;
+  return await requestChatJson(`/api/conversations/${encodeURIComponent(safeConversationId)}/read`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      lastReadMessageId: options.lastReadMessageId || null,
+    }),
+  });
+};
+
 export const fetchChatMediaUrl = async (mediaId, variant = 'thumbnail') => {
   const safeMediaId = String(mediaId || '').trim();
   if (!safeMediaId) return null;

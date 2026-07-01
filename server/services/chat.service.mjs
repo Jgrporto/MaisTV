@@ -3,6 +3,12 @@ import { decodeCursor,encodeCursor,parseLimit } from './cursor.service.mjs';
 import { listConversations,getConversation } from '../repositories/conversations.repository.mjs';
 import { listMessages,insertPendingOutbound } from '../repositories/messages.repository.mjs';
 import { updateConversationLastOutbound } from '../repositories/conversations.repository.mjs';
+import {
+  countUnreadForUser,
+  findLatestConversationMessage,
+  findMessageReadCursor,
+  upsertConversationRead,
+} from '../repositories/conversation-reads.repository.mjs';
 import { addJob } from '../queues/queues.mjs';
 import { getChatAccessFilter } from './chat-authorization.service.mjs';
 import { withTransaction } from '../db/postgres.mjs';
@@ -25,7 +31,8 @@ export const shapeConversationSummary=(row,now=Date.now())=>{
   const lastReceivedAt=row.last_received_at||null;
   const lastReceivedAtMs=Date.parse(String(lastReceivedAt||''));
   const isWithinCustomerWindow=Number.isFinite(lastReceivedAtMs)&&now-lastReceivedAtMs<=CUSTOMER_WINDOW_MS;
-  return {id:row.id,customer_id:row.customer_id,contact_name:row.contact_name,contact_phone:row.contact_phone,avatar_url:row.avatar_url,last_message:row.last_message,last_message_type:row.last_message_type,last_message_at:row.last_message_at,last_received_at:lastReceivedAt,last_client_message_time:lastReceivedAt,unread_count:row.unread_count,status:row.status,priority:row.priority,assigned_agent_id:row.assigned_agent_id,assigned_agent_name:row.assigned_agent_name,queue_id:row.queue_id,service_id:row.service_id,tags:row.tags_json||[],labels:row.labels_json||[],is_pinned:row.is_pinned,manual_unread:row.manual_unread,is_within_customer_window:isWithinCustomerWindow,source_accounts:row.source_accounts_json||[],default_route_selector:row.default_route_selector_json,active_route_selector:row.active_route_selector_json};
+  const userUnreadCount=Number.isFinite(Number(row.user_unread_count))?Number(row.user_unread_count):Number(row.unread_count||0);
+  return {id:row.id,customer_id:row.customer_id,contact_name:row.contact_name,contact_phone:row.contact_phone,avatar_url:row.avatar_url,last_message:row.last_message,last_message_type:row.last_message_type,last_message_at:row.last_message_at,last_received_at:lastReceivedAt,last_client_message_time:lastReceivedAt,unread_count:userUnreadCount,unreadCount:userUnreadCount,isUnread:userUnreadCount>0,status:row.status,priority:row.priority,assigned_agent_id:row.assigned_agent_id,assigned_agent_name:row.assigned_agent_name,queue_id:row.queue_id,service_id:row.service_id,tags:row.tags_json||[],labels:row.labels_json||[],is_pinned:row.is_pinned,manual_unread:row.manual_unread,is_within_customer_window:isWithinCustomerWindow,source_accounts:row.source_accounts_json||[],default_route_selector:row.default_route_selector_json,active_route_selector:row.active_route_selector_json};
 };
 export const getConversationPage=async({auth,limit,cursor,status})=>{
   const tenantId=auth.tenantId;const access=getChatAccessFilter(auth);
@@ -58,4 +65,47 @@ export const queueOutboundMessage=async({auth,input})=>{
   await publishRealtimeEvent({...eventScope,type:'new_message',data:{conversationId:conversation.id,message}});
   await publishRealtimeEvent({...eventScope,type:'conversation_updated',data:{conversationId:conversation.id,conversation:result.conversation}});
   return message;
+};
+
+export const markConversationRead=async({auth,conversationId,input={}})=>{
+  const tenantId=auth.tenantId;const userId=String(auth.userId||'').trim();const access=getChatAccessFilter(auth);
+  if(!userId) throw Object.assign(new Error('Authenticated user is required to mark a conversation as read.'),{statusCode:401});
+  const conversation=await getConversation(tenantId,conversationId,access);
+  if(!conversation) throw Object.assign(new Error('Conversation not found.'),{statusCode:404});
+  const requestedMessageId=String(input.lastReadMessageId||input.last_read_message_id||'').trim();
+  const result=await withTransaction(async(client)=>{
+    const cursor=requestedMessageId
+      ? await findMessageReadCursor({tenantId,conversationId,userId,messageId:requestedMessageId},client)
+      : await findLatestConversationMessage({tenantId,conversationId},client);
+    const lastReadAt=cursor?.created_at||new Date().toISOString();
+    const read=await upsertConversationRead({
+      tenantId,
+      conversationId,
+      userId,
+      lastReadMessageId:cursor?.id||null,
+      lastReadAt,
+    },client);
+    const unreadCount=await countUnreadForUser({tenantId,conversationId,userId},client);
+    return {read,unreadCount};
+  });
+  const data={
+    conversationId,
+    userId,
+    unreadCount:result.unreadCount,
+    unread_count:result.unreadCount,
+    lastReadAt:result.read.last_read_at,
+    last_read_at:result.read.last_read_at,
+    lastReadMessageId:result.read.last_read_message_id,
+    last_read_message_id:result.read.last_read_message_id,
+  };
+  await publishRealtimeEvent({
+    tenantId,
+    userId,
+    conversationId,
+    queueId:conversation.queue_id,
+    customerPhone:conversation.contact_phone,
+    type:'conversation_read',
+    data,
+  });
+  return data;
 };

@@ -6,7 +6,12 @@ import {
   CHAT_MAX_CACHED_MESSAGES_PER_CONVERSATION,
   ENABLE_SSE_REALTIME,
 } from '@/lib/performance-config';
-import { appendMessageCache, updateConversationCaches, updateMessageStatusCache } from '../cache-updaters';
+import {
+  appendMessageCache,
+  markConversationReadCaches,
+  updateConversationCaches,
+  updateMessageStatusCache,
+} from '../cache-updaters';
 import { useChatStore } from '../store/useChatStore';
 
 const EVENT_NAMES = [
@@ -16,6 +21,7 @@ const EVENT_NAMES = [
   'queue_updated',
   'agent_assigned',
   'media_updated',
+  'conversation_read',
 ];
 
 const parseEventData = (event) => {
@@ -61,13 +67,23 @@ export function useChatEvents({ selectedConversationId = '' } = {}) {
           const message = payload.message || payload;
           if (conversationId) {
             appendMessageCache(queryClient, conversationId, message, CHAT_MAX_CACHED_MESSAGES_PER_CONVERSATION);
-            updateConversationCaches(queryClient, conversationId, payload.summary || {
+            const isSelectedConversation = String(conversationId) === String(selectedConversationIdRef.current);
+            const senderType = String(message.sender_type || message.senderType || message.direction || '').trim().toLowerCase();
+            const isInboundMessage = senderType === 'client' || senderType === 'customer' || senderType === 'inbound';
+            const activityPatch = payload.summary || {
               last_message: message.body || message.content || '',
               last_message_type: message.type || message.message_type || 'text',
               last_message_at: message.created_at || message.created_date || message.timestamp,
-              unread_count: String(conversationId) === String(selectedConversationIdRef.current)
-                ? 0
-                : Number(payload.unreadCount ?? payload.unread_count ?? 1),
+            };
+            updateConversationCaches(queryClient, conversationId, (currentConversation = {}) => {
+              const currentUnread = Number(currentConversation.unread_count || currentConversation.unreadCount || 0);
+              const unreadCount = isSelectedConversation || !isInboundMessage ? 0 : currentUnread + 1;
+              return {
+                ...activityPatch,
+                unread_count: unreadCount,
+                unreadCount,
+                isUnread: unreadCount > 0,
+              };
             }, { prepend: true });
           }
           dispatchLocalRealtimeEvent('conversation:message-upserted', { ...payload, conversationId, message });
@@ -89,8 +105,26 @@ export function useChatEvents({ selectedConversationId = '' } = {}) {
           return;
         }
 
+        if (eventName === 'conversation_read') {
+          if (conversationId) {
+            markConversationReadCaches(queryClient, conversationId, payload.unreadCount ?? payload.unread_count ?? 0);
+          }
+          dispatchLocalRealtimeEvent('conversation:read', { ...payload, conversationId });
+          return;
+        }
+
         if (conversationId && (eventName === 'conversation_updated' || eventName === 'agent_assigned')) {
-          updateConversationCaches(queryClient, conversationId, payload.summary || payload.conversation || payload);
+          const patch = payload.summary || payload.conversation || payload;
+          updateConversationCaches(queryClient, conversationId, (currentConversation = {}) => {
+            const currentUnread = Number(currentConversation.unread_count || currentConversation.unreadCount || 0);
+            const unreadCount = String(conversationId) === String(selectedConversationIdRef.current) ? 0 : currentUnread;
+            return {
+              ...patch,
+              unread_count: unreadCount,
+              unreadCount,
+              isUnread: unreadCount > 0,
+            };
+          });
         }
       };
       handlers.set(eventName, handler);

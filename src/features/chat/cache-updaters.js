@@ -6,8 +6,13 @@ const getMessageId = (value) => String(
 const patchConversationList = (items, conversationId, patch, { prepend = false } = {}) => {
   if (!Array.isArray(items)) return items;
   const index = items.findIndex((item) => getConversationId(item) === conversationId);
-  if (index < 0) return prepend && patch ? [{ id: conversationId, ...patch }, ...items] : items;
-  const nextItem = { ...items[index], ...patch };
+  if (index < 0) {
+    if (!prepend || !patch) return items;
+    const nextPatch = typeof patch === 'function' ? patch({ id: conversationId }) : patch;
+    return [{ id: conversationId, ...nextPatch }, ...items];
+  }
+  const nextPatch = typeof patch === 'function' ? patch(items[index]) : patch;
+  const nextItem = { ...items[index], ...nextPatch };
   return prepend
     ? [nextItem, ...items.slice(0, index), ...items.slice(index + 1)]
     : items.map((item, itemIndex) => (itemIndex === index ? nextItem : item));
@@ -22,7 +27,8 @@ const patchConversationData = (data, conversationId, patch, options) => {
       const pageItems = Array.isArray(page) ? page : page?.items;
       existing ||= pageItems?.find((item) => getConversationId(item) === conversationId) || null;
     }
-    const nextItem = { id: conversationId, ...(existing || {}), ...(patch || {}) };
+    const nextPatch = typeof patch === 'function' ? patch(existing || { id: conversationId }) : patch;
+    const nextItem = { id: conversationId, ...(existing || {}), ...(nextPatch || {}) };
     const pages = data.pages.map((page, pageIndex) => {
       const pageItems = Array.isArray(page) ? page : page?.items;
       if (!Array.isArray(pageItems)) return page;
@@ -53,6 +59,15 @@ export function updateConversationCaches(queryClient, conversationId, patch, opt
     patchConversationData(data, safeId, patch, options));
   queryClient.setQueriesData({ queryKey: ['chat', 'conversations'] }, (data) =>
     patchConversationData(data, safeId, patch, options));
+}
+
+export function markConversationReadCaches(queryClient, conversationId, unreadCount = 0) {
+  const nextUnreadCount = Math.max(0, Number(unreadCount || 0));
+  updateConversationCaches(queryClient, conversationId, {
+    unread_count: nextUnreadCount,
+    unreadCount: nextUnreadCount,
+    isUnread: nextUnreadCount > 0,
+  });
 }
 
 const appendMessageToPages = (data, message, maxMessages) => {

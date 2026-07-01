@@ -2,9 +2,9 @@ import { query } from '../db/postgres.mjs';
 export const listConversations = async ({ tenantId, status, limit, cursor, access }) => {
   const values = [tenantId];
   const where = ['c.tenant_id=$1'];
+  values.push(access?.userId || '');
+  const userParam = `$${values.length}`;
   if (access && !access.privileged) {
-    values.push(access.userId || '');
-    const userParam = `$${values.length}`;
     values.push(access.queueIds || []);
     const queueParam = `$${values.length}`;
     where.push(`(c.assigned_agent_id=${userParam} OR c.queue_id=ANY(${queueParam}::text[]) OR c.service_id=ANY(${queueParam}::text[]))`);
@@ -15,7 +15,8 @@ export const listConversations = async ({ tenantId, status, limit, cursor, acces
   const result = await query(`
     SELECT c.*,
       COALESCE(c.last_message_at,c.created_at) AS cursor_at,
-      latest_inbound.last_received_at
+      latest_inbound.last_received_at,
+      COALESCE(user_unread.unread_count, c.unread_count, 0) AS user_unread_count
     FROM conversations c
     LEFT JOIN LATERAL (
       SELECT m.created_at AS last_received_at
@@ -26,6 +27,19 @@ export const listConversations = async ({ tenantId, status, limit, cursor, acces
       ORDER BY m.created_at DESC,m.id DESC
       LIMIT 1
     ) latest_inbound ON true
+    LEFT JOIN LATERAL (
+      SELECT CASE WHEN ${userParam}='' THEN NULL ELSE COUNT(m.id)::int END AS unread_count
+      FROM messages m
+      LEFT JOIN conversation_reads cr
+        ON cr.tenant_id=c.tenant_id
+       AND cr.conversation_id=c.id
+       AND cr.user_id=${userParam}
+      WHERE m.tenant_id=c.tenant_id
+        AND m.conversation_id=c.id
+        AND m.direction='inbound'
+        AND ${userParam}<>''
+        AND m.created_at > COALESCE(cr.last_read_at, '1970-01-01'::timestamptz)
+    ) user_unread ON true
     WHERE ${where.join(' AND ')}
     ORDER BY COALESCE(c.last_message_at,c.created_at) DESC,c.id DESC
     LIMIT $${values.length}

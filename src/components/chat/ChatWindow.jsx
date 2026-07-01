@@ -37,6 +37,7 @@ import {
   fetchChatMediaUrl,
   fetchWhatsappAudioTranscription,
   fetchWhatsappMessages as fetchLegacyWhatsappMessages,
+  markChatConversationRead,
   normalizeWhatsappMessage,
   markWhatsappConversationsRead,
   reactToWhatsappMessage,
@@ -77,6 +78,7 @@ import VirtualizedMessageThread from '@/features/chat/components/VirtualizedMess
 import { ENABLE_CHAT_VIRTUALIZATION, ENABLE_NEW_CHAT_DATA_LAYER, MESSAGE_PAGE_LIMIT } from '@/lib/performance-config';
 import { useChatStore } from '@/features/chat/store/useChatStore';
 import { flattenMessagePages, useMessages } from '@/features/chat/hooks/useMessages';
+import { markConversationReadCaches } from '@/features/chat/cache-updaters';
 
 const INITIAL_MESSAGE_PAGE_SIZE = MESSAGE_PAGE_LIMIT;
 const OLDER_MESSAGE_PAGE_SIZE = MESSAGE_PAGE_LIMIT;
@@ -1009,6 +1011,8 @@ export default function ChatWindow({
   const latestDraftValueRef = useRef('');
   const shouldPromoteDraftOnExitRef = useRef(false);
   const shouldDeleteDraftOnExitRef = useRef(false);
+  const markReadTimeoutRef = useRef(null);
+  const lastMarkedReadKeyRef = useRef('');
   const outgoingQueueRef = useRef(Promise.resolve());
   const retryPayloadsRef = useRef(new Map());
   const nextOutgoingOrderRef = useRef(1);
@@ -1283,27 +1287,64 @@ export default function ChatWindow({
     setDraftValue(nextValue);
   };
 
-  useEffect(() => {
-    if (!conversation?.id || !conversation.unread_count) return;
+  const scheduleMarkConversationRead = useCallback((reason = 'visible', explicitMessageId = '') => {
+    if (!conversation?.id || (messages.length === 0 && !explicitMessageId)) return;
+    const latestVisibleMessage = [...messages]
+      .reverse()
+      .find((message) => String(message?.id || message?.server_message_id || '').trim());
+    const latestVisibleMessageId = String(
+      explicitMessageId || latestVisibleMessage?.server_message_id || latestVisibleMessage?.id || ''
+    ).trim();
+    const readKey = `${conversation.id}:${latestVisibleMessageId || 'latest'}:${reason}`;
+    if (lastMarkedReadKeyRef.current === readKey) return;
 
-    const markAsRead = async () => {
-      try {
-        const targetIds = Array.isArray(conversation.source_conversation_ids) && conversation.source_conversation_ids.length > 0
-          ? conversation.source_conversation_ids
-          : [conversation.id];
-        await markWhatsappConversationsRead(targetIds);
-        updateConversationQueryCaches(queryClient, conversation.id, (currentConversation) => ({
-          ...currentConversation,
-          unread_count: 0,
-          unreadCount: 0,
-        }));
-      } catch {
-        // Keep UI usable even if marking as read fails.
+    if (markReadTimeoutRef.current) {
+      window.clearTimeout(markReadTimeoutRef.current);
+    }
+
+    markReadTimeoutRef.current = window.setTimeout(() => {
+      lastMarkedReadKeyRef.current = readKey;
+      const applyLocalRead = (unreadCount = 0) => {
+        markConversationReadCaches(queryClient, conversation.id, unreadCount);
+        onUpdateConversation?.({
+          ...conversation,
+          unread_count: unreadCount,
+          unreadCount,
+          isUnread: unreadCount > 0,
+        });
+      };
+
+      if (ENABLE_NEW_CHAT_DATA_LAYER) {
+        void markChatConversationRead(conversation.id, { lastReadMessageId: latestVisibleMessageId || null })
+          .then((result) => applyLocalRead(result?.unreadCount ?? result?.unread_count ?? 0))
+          .catch(() => {
+            lastMarkedReadKeyRef.current = '';
+          });
+        return;
       }
-    };
 
-    void markAsRead();
-  }, [conversation?.id, conversation?.unread_count, queryClient]);
+      const targetIds = Array.isArray(conversation.source_conversation_ids) && conversation.source_conversation_ids.length > 0
+        ? conversation.source_conversation_ids
+        : [conversation.id];
+      void markWhatsappConversationsRead(targetIds)
+        .then(() => applyLocalRead(0))
+        .catch(() => {
+          lastMarkedReadKeyRef.current = '';
+        });
+    }, 700);
+  }, [conversation, messages, onUpdateConversation, queryClient]);
+
+  useEffect(() => {
+    if (!conversation?.id || !conversation.unread_count || messages.length === 0) return undefined;
+    scheduleMarkConversationRead('open');
+    return undefined;
+  }, [conversation?.id, conversation?.unread_count, messages.length, scheduleMarkConversationRead]);
+
+  useEffect(() => () => {
+    if (markReadTimeoutRef.current) {
+      window.clearTimeout(markReadTimeoutRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     if (!conversation?.id || !onClearConversation) {
@@ -1578,18 +1619,6 @@ export default function ChatWindow({
   useEffect(() => {
     if (!conversation?.id) return undefined;
 
-    const markCurrentConversationRead = () => {
-      const targetIds = Array.isArray(conversation.source_conversation_ids) && conversation.source_conversation_ids.length > 0
-        ? conversation.source_conversation_ids
-        : [conversation.id];
-      void markWhatsappConversationsRead(targetIds).catch(() => {});
-      updateConversationQueryCaches(queryClient, conversation.id, (currentConversation) => ({
-        ...currentConversation,
-        unread_count: 0,
-        unreadCount: 0,
-      }));
-    };
-
     const handleMessageUpserted = (payload = {}) => {
       if (!isRealtimeEventForConversation(payload, conversation)) return;
 
@@ -1611,7 +1640,8 @@ export default function ChatWindow({
       });
 
       if (String(realtimeMessage.sender_type || '').trim().toLowerCase() === 'client') {
-        markCurrentConversationRead();
+        const realtimeMessageId = String(realtimeMessage.server_message_id || realtimeMessage.id || '').trim();
+        window.setTimeout(() => scheduleMarkConversationRead('realtime', realtimeMessageId), 0);
       }
     };
 
@@ -1656,7 +1686,7 @@ export default function ChatWindow({
       unsubscribeStatus();
       unsubscribeReaction();
     };
-  }, [conversation, queryClient, refreshRecentMessages, sourceAccountsKey, sourceConversationIdsKey]);
+  }, [conversation, queryClient, refreshRecentMessages, scheduleMarkConversationRead, sourceAccountsKey, sourceConversationIdsKey]);
 
   const loadHistoryMessages = async () => {
     if (!conversation?.id || isLoadingHistory || !hasHistoryMessages) {
