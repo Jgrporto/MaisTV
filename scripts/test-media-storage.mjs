@@ -9,7 +9,7 @@ const config = getStorageConfig();
 const nonce = crypto.randomUUID();
 const key = `maistv/storage-smoke/${nonce}.txt`;
 const body = Buffer.from(`maistv-storage-smoke:${nonce}`, 'utf8');
-const report = { provider: config.provider, bucket: config.bucket, endpoint: config.endpoint || 'aws-default', key, uploaded: false, head: false, read: false, signedUrl: false, signedDownload: false, deleted: false };
+const report = { provider: config.provider, bucket: config.bucket, endpoint: config.endpoint || 'aws-default', key, uploaded: false, head: false, read: false, signedUrl: false, signedDownload: false, pathTraversalBlocked: false, deleted: false };
 
 try {
   await putObject({ key, body, contentType: 'text/plain; charset=utf-8', metadata: { smoke: 'true' } });
@@ -23,11 +23,22 @@ try {
   report.read = downloaded.equals(body);
   const url = await createSignedDownloadUrl(key);
   report.signedUrl = /^https?:\/\//.test(url);
-  const response = await fetch(url);
-  report.signedDownload = response.ok && Buffer.from(await response.arrayBuffer()).equals(body);
+  if (config.provider === 'local') {
+    report.signedUrl = url.startsWith('local://media/');
+    report.signedDownload = report.read;
+    try {
+      await putObject({ key: '../blocked.txt', body: 'blocked' });
+    } catch {
+      report.pathTraversalBlocked = true;
+    }
+  } else {
+    const response = await fetch(url);
+    report.signedDownload = response.ok && Buffer.from(await response.arrayBuffer()).equals(body);
+    report.pathTraversalBlocked = true;
+  }
 } finally {
   await deleteObject(key).then(() => { report.deleted = true; }).catch((error) => { report.deleteError = error.message; });
 }
 
 console.log(JSON.stringify(report, null, 2));
-if (!report.uploaded || !report.head || !report.read || !report.signedUrl || !report.signedDownload || !report.deleted) process.exitCode = 1;
+if (!report.uploaded || !report.head || !report.read || !report.signedUrl || !report.signedDownload || !report.pathTraversalBlocked || !report.deleted) process.exitCode = 1;

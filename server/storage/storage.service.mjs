@@ -12,8 +12,19 @@ const stripTrailingSlash = (value) => String(value || '').trim().replace(/\/+$/,
 
 export const getStorageConfig = () => {
   const provider = String(process.env.STORAGE_PROVIDER || 's3').trim().toLowerCase();
-  if (!['s3', 'r2'].includes(provider)) {
-    throw new Error(`Unsupported STORAGE_PROVIDER: ${provider || '(empty)'}. Use s3 or r2.`);
+  if (!['s3', 'r2', 'local'].includes(provider)) {
+    throw new Error(`Unsupported STORAGE_PROVIDER: ${provider || '(empty)'}. Use s3, r2 or local.`);
+  }
+
+  if (provider === 'local') {
+    return {
+      provider,
+      bucket: 'local',
+      endpoint: 'local-filesystem',
+      root: String(process.env.LOCAL_STORAGE_ROOT || '/var/lib/maistv-next/media').trim(),
+      internalPrefix: String(process.env.LOCAL_STORAGE_INTERNAL_PREFIX || '/protected-media').trim(),
+      signedUrlTtlSeconds: parsePositiveInteger(process.env.MEDIA_SIGNED_URL_TTL_SECONDS, 300),
+    };
   }
 
   const endpoint = stripTrailingSlash(process.env.S3_ENDPOINT || process.env.R2_ENDPOINT);
@@ -65,6 +76,10 @@ const requireKey = (key) => {
 
 export const createSignedDownloadUrl = async (key, expiresIn) => {
   const safeKey = requireKey(key);
+  if (getStorageConfig().provider === 'local') {
+    const { createLocalStorageToken } = await import('./media-access-token.service.mjs');
+    return `local://media/${createLocalStorageToken({ key: safeKey, expiresIn })}`;
+  }
   const [{ client, config }, { GetObjectCommand }, { getSignedUrl }] = await Promise.all([
     getClient(),
     import('@aws-sdk/client-s3'),
@@ -79,6 +94,10 @@ export const createSignedDownloadUrl = async (key, expiresIn) => {
 export const putObject = async ({ key, body, contentType, contentDisposition, metadata }) => {
   const safeKey = requireKey(key);
   if (body == null) throw new Error('Storage upload body is required.');
+  if (getStorageConfig().provider === 'local') {
+    const { putLocalObject } = await import('./local-storage.service.mjs');
+    return putLocalObject({ key: safeKey, body, contentType, contentDisposition, metadata });
+  }
   const [{ client, config }, { PutObjectCommand }] = await Promise.all([getClient(), import('@aws-sdk/client-s3')]);
   await client.send(new PutObjectCommand({
     Bucket: config.bucket,
@@ -96,18 +115,30 @@ export const putObject = async ({ key, body, contentType, contentDisposition, me
 
 export const getObject = async (key) => {
   const safeKey = requireKey(key);
+  if (getStorageConfig().provider === 'local') {
+    const { getLocalObject } = await import('./local-storage.service.mjs');
+    return getLocalObject(safeKey);
+  }
   const [{ client, config }, { GetObjectCommand }] = await Promise.all([getClient(), import('@aws-sdk/client-s3')]);
   return client.send(new GetObjectCommand({ Bucket: config.bucket, Key: safeKey }));
 };
 
 export const headObject = async (key) => {
   const safeKey = requireKey(key);
+  if (getStorageConfig().provider === 'local') {
+    const { headLocalObject } = await import('./local-storage.service.mjs');
+    return headLocalObject(safeKey);
+  }
   const [{ client, config }, { HeadObjectCommand }] = await Promise.all([getClient(), import('@aws-sdk/client-s3')]);
   return client.send(new HeadObjectCommand({ Bucket: config.bucket, Key: safeKey }));
 };
 
 export const deleteObject = async (key) => {
   const safeKey = requireKey(key);
+  if (getStorageConfig().provider === 'local') {
+    const { deleteLocalObject } = await import('./local-storage.service.mjs');
+    return deleteLocalObject(safeKey);
+  }
   const [{ client, config }, { DeleteObjectCommand }] = await Promise.all([getClient(), import('@aws-sdk/client-s3')]);
   await client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: safeKey }));
   return { key: safeKey };

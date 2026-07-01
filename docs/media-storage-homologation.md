@@ -1,44 +1,61 @@
-# Homologacao de midia inbound com R2/S3
+# Homologacao de midia inbound com storage local privado
 
 Este runbook e exclusivo da instalacao isolada `/root/MaisTV`. Ele nao altera `/root/SaasTV`, nao ativa outbound, rotinas, schedulers ou novas rotas de webhook.
 
-## Configuracao recomendada para Cloudflare R2
+## Decisao de storage
 
-Crie um bucket privado dedicado, por exemplo `maistv-homolog-media`, e uma credencial R2 limitada a leitura e escrita nesse bucket. Nao habilite acesso publico se a aplicacao usar URLs assinadas.
+A etapa de homologacao usa obrigatoriamente storage local privado na VPS:
 
 ```dotenv
-STORAGE_PROVIDER=r2
-S3_ENDPOINT=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
-S3_REGION=auto
-S3_BUCKET=maistv-homolog-media
-S3_ACCESS_KEY_ID=<R2_ACCESS_KEY_ID>
-S3_SECRET_ACCESS_KEY=<R2_SECRET_ACCESS_KEY>
-S3_PUBLIC_BASE_URL=
-S3_FORCE_PATH_STYLE=false
+STORAGE_PROVIDER=local
+LOCAL_STORAGE_ROOT=/var/lib/maistv-next/media
+LOCAL_STORAGE_INTERNAL_PREFIX=/protected-media
 MEDIA_SIGNED_URL_TTL_SECONDS=300
+MEDIA_ACCESS_TOKEN_SECRET=<secret-gerado-com-openssl-rand-hex-32>
 ```
 
-Para AWS S3, use `STORAGE_PROVIDER=s3`, a regiao real, deixe `S3_ENDPOINT` vazio e mantenha `S3_FORCE_PATH_STYLE=false`. Para MinIO/outro S3 compativel, informe o endpoint e use `S3_FORCE_PATH_STYLE=true` apenas se o provedor exigir.
+Nao configurar Cloudflare R2, AWS S3, MinIO ou outro object storage externo nesta etapa. O suporte a `s3` e `r2` permanece no codigo para uso futuro.
 
-O arquivo real e `/etc/maistv-next/maistv-next.env`, deve pertencer a `root:root` e ter modo `0600`. Nunca registre credenciais no Git ou em logs.
+## Protecao no Nginx
 
-## CORS do bucket
+Os arquivos nao ficam publicos. O Nginx deve entregar somente requisicoes autorizadas pela API via `X-Accel-Redirect`:
 
-URLs assinadas sao acessadas pelo navegador. Configure CORS no bucket para permitir somente a homologacao:
+```nginx
+location /protected-media/ {
+    internal;
+    alias /var/lib/maistv-next/media/;
+}
+```
+
+A pasta real `/var/lib/maistv-next/media` nao deve aparecer como `root`, `alias` publico ou rota estatica comum. O frontend recebe URLs temporarias da API, por exemplo:
+
+```text
+GET /api/media/<MEDIA_ID>/signed-url
+GET /api/media/<MEDIA_ID>/thumbnail
+```
+
+Com `STORAGE_PROVIDER=local`, essas rotas retornam URLs temporarias da propria API:
 
 ```json
-[
-  {
-    "AllowedOrigins": ["https://homolog-test.hakione.tech"],
-    "AllowedMethods": ["GET", "HEAD"],
-    "AllowedHeaders": ["Range", "If-None-Match", "If-Modified-Since", "Content-Type"],
-    "ExposeHeaders": ["ETag", "Content-Length", "Content-Range", "Accept-Ranges", "Content-Type"],
-    "MaxAgeSeconds": 3600
-  }
-]
+{
+  "url": "https://api-homolog-test.hakione.tech/api/media/<MEDIA_ID>/download?token=<token>",
+  "expiresIn": 300
+}
 ```
 
-Upload e leitura server-side usam a API S3 e nao dependem de CORS. Nao inclua `PUT` para a origem do frontend: o browser nao faz upload direto ao bucket nesta arquitetura.
+O token e assinado por HMAC com `MEDIA_ACCESS_TOKEN_SECRET` e escopado por tenant, usuario, media, chave do arquivo, tipo e expiracao.
+
+## Permissoes da pasta local
+
+Crie a pasta antes de iniciar os servicos:
+
+```bash
+mkdir -p /var/lib/maistv-next/media
+chown -R root:root /var/lib/maistv-next/media
+chmod 750 /var/lib/maistv-next/media
+```
+
+Se os servicos systemd forem executados por outro usuario, troque o dono para esse usuario, por exemplo `maistv:maistv`.
 
 ## Deploy controlado na MaisTV
 
@@ -63,15 +80,15 @@ rsync -a --delete /root/MaisTV/dist/ /var/www/maistv-next/dist/
 chown -R www-data:www-data /var/www/maistv-next/dist
 
 nginx -t
-systemctl restart maistv-next-api maistv-next-chat-worker@media
 systemctl reload nginx
+systemctl restart maistv-next-api maistv-next-sse maistv-next-chat-worker@media maistv-next-chat-worker@inbound maistv-next-chat-worker@status
 ```
 
 Nao iniciar `maistv-next-chat-worker@outbound`, `maistv-next-worker`, `maistv-next-routine-worker` ou `maistv-next-assignment-worker` nesta etapa.
 
 ## Smoke test do storage
 
-O teste cria um objeto temporario, executa `PUT`, `HEAD`, leitura autenticada, gera URL assinada, baixa pela URL e apaga somente o objeto temporario:
+O teste cria um objeto temporario, executa write, head, read, token temporario local, bloqueio de path traversal e delete:
 
 ```bash
 cd /root/MaisTV
@@ -81,7 +98,7 @@ set +a
 npm run storage:test -- --confirm
 ```
 
-Todos os campos booleanos do relatorio devem ser `true`.
+Todos os campos booleanos do relatorio devem ser `true`, incluindo `pathTraversalBlocked`.
 
 ## Inspecao e reprocessamento dos jobs falhos
 
@@ -95,7 +112,7 @@ set +a
 npm run media:failed:report
 ```
 
-O relatorio registra ID, payload, tentativas, motivo da falha e linha correspondente em `media_files`. Depois do smoke test do storage:
+Depois do smoke test do storage:
 
 ```bash
 npm run media:failed:reprocess
@@ -103,14 +120,11 @@ sleep 15
 npm run media:failed:report
 ```
 
-Os JSONs ficam em `scripts/reports/media/`. O script nao apaga jobs. Ele usa `retry('failed')`; o processamento e idempotente por chave de objeto e confere o objeto existente antes de baixar novamente.
+Os JSONs ficam em `scripts/reports/media/`. O script nao apaga jobs.
 
 ## Validacoes operacionais
 
 ```bash
-# Bull Board autenticado
-# https://api-homolog-test.hakione.tech/admin/queues
-
 journalctl -u maistv-next-chat-worker@media -n 200 --no-pager
 journalctl -f -u maistv-next-chat-worker@media -u maistv-next-api -u maistv-next-sse
 
@@ -120,9 +134,6 @@ SELECT id,provider_media_id,message_id,type,mime_type,size_bytes,status,
 FROM media_files
 ORDER BY updated_at DESC
 LIMIT 30;"
-
-docker exec maistv-next-postgres-1 pg_isready -U maistv_next -d maistv_next
-docker exec maistv-next-redis-1 redis-cli ping
 
 systemctl is-active \
   maistv-next-api \
@@ -140,24 +151,21 @@ systemctl is-active \
 
 Os quatro ultimos devem continuar inativos.
 
-## Validar uma URL assinada
-
-Com um `mediaId` disponivel e uma sessao autenticada no painel, a chamada e:
-
-```text
-GET https://api-homolog-test.hakione.tech/api/media/<MEDIA_ID>/signed-url
-GET https://api-homolog-test.hakione.tech/api/media/<MEDIA_ID>/thumbnail
-```
-
-O original exige `status=available` e `storage_key`; thumbnail exige `thumbnail_key`. O TTL vem de `MEDIA_SIGNED_URL_TTL_SECONDS`.
-
 ## Matriz de aceite
 
 1. Envie imagem, audio, PDF e video por uma rota explicitamente autorizada para homologacao.
-2. Confirme job `completed`, `media_files.status='available'` e objeto no bucket.
+2. Confirme job `completed`, `media_files.status='available'` e arquivo em `/var/lib/maistv-next/media`.
 3. Imagem deve gerar `thumbnail_key`; video usa placeholder seguro; audio nao gera thumbnail; documento preserva nome, MIME e tamanho.
 4. Na tela, imagem solicita thumbnail perto da viewport e original somente ao abrir; documento solicita original somente no clique; audio solicita original quando o usuario escolhe reproduzir; video solicita original quando ativado.
 5. O evento SSE `media_updated` invalida apenas o cache de mensagens da conversa e refaz a consulta sem polling agressivo.
-6. Para audio, use `Transcrever audio`. A API le o objeto privado, chama o Whisper configurado e persiste `messages.transcription_json`. Falha fica registrada e nao remove nem quebra a mensagem.
+6. Para audio, use `Transcrever audio`. A API le o objeto privado local, chama o Whisper configurado e persiste `messages.transcription_json`.
 
-Sem uma rota temporariamente autorizada ou IDs Meta ainda validos nos jobs falhos, e possivel aprovar o storage, mas nao o recebimento inbound Meta de todos os quatro tipos.
+## Backup futuro
+
+Documentar backup da pasta:
+
+```text
+/var/lib/maistv-next/media
+```
+
+Recomendacao futura: backup diario com `rsync` ou snapshot para outro disco/servidor, retencao minima e teste de restore. Nao ativar automacao de backup nesta etapa sem autorizacao explicita.
