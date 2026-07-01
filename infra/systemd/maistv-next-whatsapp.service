@@ -8,9 +8,12 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=/root/MaisTV
-Environment=NODE_ENV=production
-Environment=WHATSAPP_SERVER_PORT=5350
 EnvironmentFile=/etc/maistv-next/maistv-next.env
+Environment=NODE_ENV=production
+Environment=WHATSAPP_SERVER_HOST=127.0.0.1
+Environment=WHATSAPP_SERVER_PORT=5350
+Environment=WHATSAPP_WEBHOOK_CHAT_ONLY=true
+Environment=SUPPORT_FLOW_EXECUTION_ENABLED=false
 ExecStart=/usr/bin/node --max-old-space-size=2048 server/whatsapp-server.js
 Restart=on-failure
 RestartSec=5

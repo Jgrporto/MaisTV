@@ -8,10 +8,11 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=/root/MaisTV
+EnvironmentFile=/etc/maistv-next/maistv-next.env
 Environment=NODE_ENV=production
+Environment=CHECKOUT_SERVER_HOST=127.0.0.1
 Environment=CHECKOUT_SERVER_PORT=5351
 Environment=CHECKOUT_RENEWAL_DISABLED=true
-EnvironmentFile=/etc/maistv-next/maistv-next.env
 ExecStart=/usr/bin/node server/checkout-server.js
 Restart=on-failure
 RestartSec=5

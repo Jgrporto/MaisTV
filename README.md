@@ -151,5 +151,6 @@ Documentação:
 - Deploy proposto e Uptime Kuma: `docs/deploy-new-chat-stack.md`
 - Rollback e reconciliação: `docs/rollback-plan.md`
 - Homologação blue-green isolada em `/root/MaisTV`: `docs/maistv-next-blue-green-deploy.md`
+- Cutover controlado dos webhooks, estágios e rollback: `docs/maistv-next-webhook-cutover.md`
 
 Sentry é opcional por `SENTRY_DSN`; sem configuração, a nova camada continua ativa. Bull Board deve permanecer autenticado/restrito. Os artefatos de deploy são sugestões versionadas: nenhuma implantação ou alteração de VPS foi executada nesta entrega.

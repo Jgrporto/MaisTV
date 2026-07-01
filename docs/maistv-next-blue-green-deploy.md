@@ -91,6 +91,14 @@ O modo esperado é `600 root:root`. Para conferir somente valores não secretos:
 sudo grep -E '^(CHAT_|VITE_.*(URL|ENABLED)|POSTGRES_(HOST|PORT|DATABASE|USER)|REDIS_(HOST|PORT|DB)|BULLMQ_PREFIX|SQLITE_DB_PATH|SSE_PORT)=' /etc/maistv-next/maistv-next.env
 ```
 
+Para o teste direto de webhooks, confirme também:
+
+```bash
+sudo grep -E '^(WHATSAPP_SERVER_HOST|CHECKOUT_SERVER_HOST|WHATSAPP_WEBHOOK_CHAT_ONLY|SUPPORT_FLOW_EXECUTION_ENABLED|WHATSAPP_SCHEDULERS_ENABLED|CHECKOUT_RENEWAL_DISABLED)=' /etc/maistv-next/maistv-next.env
+```
+
+O esperado é loopback nos dois hosts, modo `chat-only=true`, execução de flows desativada, schedulers desativados e renovação desativada.
+
 ## 6. Criar snapshot consistente dos dados legados
 
 Nunca copie os arquivos `-wal` e `-shm` diretamente. Use o backup online do SQLite:
@@ -260,7 +268,7 @@ cd /root/MaisTV
 set -a
 source /etc/maistv-next/maistv-next.env
 set +a
-npm run maistv-next:test-webhook -- --confirm --customer 5500000000000
+npm run maistv-next:test-webhook -- --confirm --route vendas2 --customer 5500000000000
 sleep 3
 sudo docker compose --project-name maistv-next --env-file /etc/maistv-next/maistv-next.env -f docker-compose.homolog.yml exec -T postgres \
   psql -U maistv_next -d maistv_next -c "SELECT contact_phone,last_message,last_message_at FROM conversations WHERE contact_phone='5500000000000';"
@@ -281,17 +289,6 @@ Teste separadamente as rotas `default`, `vendas` e `vendas2`. O worker escolhe t
 
 ## 14. Preparação do cutover futuro
 
-Não execute esta seção durante a homologação. O snippet `infra/nginx/production-webhook-cutover.conf` contém somente as três rotas oficiais de webhook e aponta para `5350`. O `whatsapp-server.js` da MaisTV mantém o fluxo legado e, com `CHAT_MIRROR_META_WEBHOOK_ENABLED=true`, espelha cada evento de forma idempotente para PostgreSQL/BullMQ.
+O teste real usa `WHATSAPP_WEBHOOK_CHAT_ONLY=true`: depois de validar a assinatura, a MaisTV aguarda a persistência idempotente no PostgreSQL/BullMQ e não executa o handler legado. Não há passagem nem espelhamento pela SaasTV.
 
-Antes do corte será necessário:
-
-1. parar temporariamente os serviços `maistv-next-*` que escrevem no snapshot;
-2. refazer snapshot/delta e backfill;
-3. instalar os overrides de scheduler em `infra/systemd/cutover/`;
-4. validar a MaisTV com portas locais;
-5. incluir o snippet no `server` HTTPS de `api.maistv.hakione.tech`;
-6. executar `nginx -t` e reload;
-7. confirmar webhooks e eventos no PostgreSQL;
-8. somente então parar os consumidores equivalentes da SaasTV.
-
-O rollback consiste em remover o include do snippet, validar Nginx e recarregar. A rota genérica `/api/` da SaasTV continua preservada durante esta primeira virada.
+O primeiro estágio redireciona somente `/api/whatsapp/webhook-vendas2`. Os estágios seguintes são cumulativos e só devem ser usados depois da aprovação do estágio anterior. Consulte `docs/maistv-next-webhook-cutover.md` para preparação, ativação, monitoramento e rollback.

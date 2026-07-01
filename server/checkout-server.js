@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 const PORT = Number.parseInt(process.env.CHECKOUT_SERVER_PORT || "5051", 10);
+const HOST = String(process.env.CHECKOUT_SERVER_HOST || "127.0.0.1").trim() || "127.0.0.1";
 const ALLOWED_ORIGIN = process.env.CHECKOUT_ALLOWED_ORIGIN || "*";
 const MERCADOPAGO_ACCESS_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN;
 const MERCADOPAGO_PUBLIC_KEY = process.env.MERCADOPAGO_PUBLIC_KEY;
@@ -2595,8 +2596,8 @@ if (CHECKOUT_RECONCILE_ENABLED && MERCADOPAGO_ACCESS_TOKEN) {
   }, 3000);
 }
 
-server.listen(PORT, () => {
-  console.log(`Checkout server running on http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`Checkout server running on http://${HOST}:${PORT}`);
 });
 
 

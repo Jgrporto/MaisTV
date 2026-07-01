@@ -280,6 +280,7 @@ const WHATSAPP_SCHEDULERS_ENABLED = parseBooleanEnv(process.env.WHATSAPP_SCHEDUL
 const WHATSAPP_HTTP_ROLE = String(process.env.WHATSAPP_HTTP_ROLE || "all").trim().toLowerCase();
 const SUPPORT_FLOW_EXECUTION_ENABLED = parseBooleanEnv(process.env.SUPPORT_FLOW_EXECUTION_ENABLED, true);
 const CHAT_MIRROR_META_WEBHOOK_ENABLED = parseBooleanEnv(process.env.CHAT_MIRROR_META_WEBHOOK_ENABLED, false);
+const WHATSAPP_WEBHOOK_CHAT_ONLY = parseBooleanEnv(process.env.WHATSAPP_WEBHOOK_CHAT_ONLY, false);
 
 const mirrorMetaWebhookToChatArchitecture = ({ rawBody, payload, routeKey }) => {
   if (!CHAT_MIRROR_META_WEBHOOK_ENABLED) return;
@@ -359,6 +360,7 @@ const logSupportFlowStoreDisabledOnce = () => {
 
 
 const PORT = Number.parseInt(process.env.WHATSAPP_SERVER_PORT || "5050", 10);
+const HOST = String(process.env.WHATSAPP_SERVER_HOST || "127.0.0.1").trim() || "127.0.0.1";
 
 
 
@@ -32498,6 +32500,17 @@ const server = http.createServer(async (req, res) => {
       }
 
       const payload = parseWebhookPayloadBuffer(rawBody);
+
+      if (WHATSAPP_WEBHOOK_CHAT_ONLY) {
+        const result = await acceptMetaWebhook({ rawBody, payload });
+        console.log(
+          `[chat-webhook] route=${webhookConfig?.routeKey || "default"} accepted=true duplicate=${Boolean(result?.duplicate)}`,
+        );
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok", accepted: true, duplicate: Boolean(result?.duplicate) }));
+        return;
+      }
+
       mirrorMetaWebhookToChatArchitecture({
         rawBody,
         payload,
@@ -54123,7 +54136,7 @@ if (WHATSAPP_SCHEDULERS_ENABLED) {
 }
 
 if (WHATSAPP_HTTP_ENABLED) {
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
 
 
 
@@ -54155,7 +54168,7 @@ server.listen(PORT, () => {
 
 
 
-  console.log(`WhatsApp server running on http://localhost:${PORT}`);
+  console.log(`WhatsApp server running on http://${HOST}:${PORT}`);
 
 
 
