@@ -1001,6 +1001,9 @@ export default function ChatWindow({
   const messagesEndRef = useRef(null);
   const scrollContainerRef = useRef(null);
   const stickToBottomRef = useRef(true);
+  const setScrollContainerElement = useCallback((element) => {
+    scrollContainerRef.current = element;
+  }, []);
   const activeConversationIdRef = useRef('');
   const latestDraftValueRef = useRef('');
   const shouldPromoteDraftOnExitRef = useRef(false);
@@ -3135,9 +3138,7 @@ export default function ChatWindow({
               onLoadOlder={handleLoadMoreMessages}
               hasOlderMessages={hasOlderMessages || hasHistoryMessages}
               isLoadingOlder={isLoadingOlder || isLoadingHistory}
-              scrollerRef={(element) => {
-                scrollContainerRef.current = element;
-              }}
+              scrollerRef={setScrollContainerElement}
               stickToBottomRef={stickToBottomRef}
               className="chat-thread-surface attendance-scrollbar relative z-0 h-full px-4 pt-4 space-y-0.5"
               style={{
