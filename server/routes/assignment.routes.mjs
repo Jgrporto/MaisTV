@@ -2,6 +2,7 @@ import {
   assignConversation,
   getAttendingUsers,
   getPresenceStatus,
+  heartbeatPresence,
   pausePresence,
   resumePresence,
   startPresence,
@@ -49,6 +50,7 @@ export const createAssignmentRouter = async ({ authMiddleware } = {}) => {
   }));
 
   router.post('/presence/start', parseJson, asyncRoute(async (req, res) => res.json(await startPresence({ auth: req.chatAuth }))));
+  router.post('/presence/heartbeat', parseJson, asyncRoute(async (req, res) => res.json(await heartbeatPresence({ auth: req.chatAuth }))));
   router.post('/presence/stop', parseJson, asyncRoute(async (req, res) => res.json(await stopPresence({
     auth: req.chatAuth,
     recoverAssignments: req.body?.recoverAssignments !== false,

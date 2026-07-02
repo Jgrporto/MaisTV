@@ -63,7 +63,7 @@ export const createQuickReplySchedule = async (payload) => {
 export const listQuickReplySchedules = async (searchParams = {}) => {
   const data = await requestLocalEntity('QuickReplySchedule', {
     method: 'GET',
-    searchParams,
+    searchParams: { limit: 50, ...searchParams },
   });
   return Array.isArray(data) ? data.map(normalizeQuickReplySchedule) : [];
 };

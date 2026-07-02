@@ -17,7 +17,6 @@ import { fetchAllPersistedCustomers } from '@/lib/customer-sync-api';
 import { buildCustomerRows } from '@/lib/customer-base';
 import { subscribeToLocalEvents } from '@/lib/local-events';
 import { dispatchLocalRealtimeEvent } from '@/lib/realtime-events';
-import { listQuickReplySchedules } from '@/lib/quick-reply-schedules';
 import { scheduleQueryInvalidation } from '@/lib/query-invalidation';
 import {
   decorateConversationsWithServices,
@@ -34,6 +33,7 @@ import { enrichConversationsWithLabels, useLabelCatalog } from '@/lib/labels';
 import {
   fetchActiveAttendanceUsers,
   fetchAttendancePresenceStatus,
+  heartbeatAttendancePresence,
   pauseAttendanceDistribution,
   resumeAttendanceDistribution,
   startAttendancePresence,
@@ -46,7 +46,6 @@ import {
   ENABLE_NEW_CHAT_DATA_LAYER,
   CUSTOMER_CACHE_REFRESH_INTERVAL_MS,
   PRESENCE_REFRESH_INTERVAL_MS,
-  SCHEDULES_REFRESH_INTERVAL_MS,
   SERVICES_REFRESH_INTERVAL_MS,
 } from '@/lib/performance-config';
 import { fetchLocalUsers } from '@/lib/users-api';
@@ -129,24 +128,6 @@ const mergeConversationDetail = (currentConversation, detailConversation) => {
   };
 };
 
-const findPendingScheduleForConversation = (conversation, schedules) => {
-  const conversationId = String(conversation?.id || '').trim();
-  const customerId = String(conversation?.customer?.id || conversation?.customer_id || '').trim();
-  const phone = normalizePhoneDigits(conversation?.contact_phone || conversation?.customer?.phone || '');
-
-  return schedules
-    .filter((schedule) => {
-      if (String(schedule?.status || '') !== 'pending') return false;
-      const schedulePhone = normalizePhoneDigits(schedule?.customerPhone || schedule?.phone || '');
-      return (
-        (conversationId && String(schedule?.conversationId || '') === conversationId) ||
-        (customerId && String(schedule?.customerId || '') === customerId) ||
-        (phone && schedulePhone && phone === schedulePhone)
-      );
-    })
-    .sort((left, right) => (Date.parse(left.scheduledAt || '') || 0) - (Date.parse(right.scheduledAt || '') || 0))[0] || null;
-};
-
 export default function Attendance() {
   const { effectiveUser } = useAuth();
   const queryClient = useQueryClient();
@@ -211,18 +192,13 @@ export default function Attendance() {
     staleTime: 5000,
   });
 
-  const { data: quickReplySchedules = [] } = useQuery({
-    queryKey: ['quick-reply-schedules'],
-    queryFn: () => listQuickReplySchedules({ status: 'pending', sort: 'scheduledAt' }),
-    staleTime: 10000,
-    refetchInterval: SCHEDULES_REFRESH_INTERVAL_MS,
-  });
-
   const { data: services = [] } = useQuery({
     queryKey: ['services', 'attendance'],
     queryFn: fetchServices,
-    staleTime: 10000,
+    staleTime: SERVICES_REFRESH_INTERVAL_MS,
     refetchInterval: SERVICES_REFRESH_INTERVAL_MS,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
   });
 
   const { data: teamUsers = [] } = useQuery({
@@ -355,7 +331,7 @@ export default function Attendance() {
       });
 
     const presenceHeartbeatId = window.setInterval(() => {
-      void startAttendancePresence().catch(() => {});
+      void heartbeatAttendancePresence().catch(() => {});
     }, 30_000);
 
     const refreshAttendanceConversations = () => {
@@ -486,7 +462,6 @@ export default function Attendance() {
 
           return {
             ...conversation,
-            pending_quick_reply_schedule: findPendingScheduleForConversation(conversation, quickReplySchedules),
             is_pinned: Boolean(preference?.is_pinned),
             pinned_at: preference?.pinned_at || '',
             pinned_by_id: preference?.pinned_by_id || '',
@@ -585,7 +560,6 @@ export default function Attendance() {
       customLabels,
       customerRows,
       draftEntriesMap,
-      quickReplySchedules,
       services,
       stageAssignments,
       effectiveUser,

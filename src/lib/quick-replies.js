@@ -172,10 +172,16 @@ const requestLocalEntity = async (entityName, { method = 'GET', id = '', body, s
   return payload;
 };
 
-export const listQuickReplies = async () => {
+export const listQuickReplies = async (options = {}) => {
+  const searchParams = {
+    sortBy: 'title',
+    limit: options.limit || 100,
+  };
+  if (options.includeActions) searchParams.include = 'actions';
+  if (options.search) searchParams.search = options.search;
   const data = await requestLocalEntity('QuickReply', {
     method: 'GET',
-    searchParams: { sortBy: 'title' },
+    searchParams,
   });
   const items = Array.isArray(data) ? data : [];
 

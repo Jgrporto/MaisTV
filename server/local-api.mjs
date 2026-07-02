@@ -4304,6 +4304,12 @@ const updateStore = async (mutate) => {
 const sendJson = (res, statusCode, payload, headers = {}) => {
   const requestOrigin = res.req?.headers?.origin;
   const allowOrigin = requestOrigin || '*';
+  const jsonText = JSON.stringify(payload);
+  if (Buffer.byteLength(jsonText, 'utf8') > 1024 * 1024) {
+    console.warn(
+      `[local-api] large_json_response method=${res.req?.method || ''} path=${res.req?.url || ''} bytes=${Buffer.byteLength(jsonText, 'utf8')}`,
+    );
+  }
 
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -4314,7 +4320,7 @@ const sendJson = (res, statusCode, payload, headers = {}) => {
     Vary: 'Origin',
     ...headers,
   });
-  res.end(JSON.stringify(payload));
+  res.end(jsonText);
 };
 
 const sendJsonText = (res, statusCode, jsonText, headers = {}) => {
@@ -4386,9 +4392,56 @@ const sortItems = (items, sortBy) => {
   });
 };
 
+const parsePositiveInteger = (value, fallback = 0) => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
 const applyLimit = (items, limitRaw) => {
-  const limit = Number.parseInt(limitRaw || '', 10);
-  return Number.isFinite(limit) && limit > 0 ? items.slice(0, limit) : items;
+  const limit = parsePositiveInteger(limitRaw, 0);
+  return limit > 0 ? items.slice(0, limit) : items;
+};
+
+const applyEntityFilters = (items, filters = {}) => {
+  const ignoredKeys = new Set(['sort', 'sortBy', 'limit', 'page', 'offset', 'cursor', 'include', 'fields']);
+  const search = String(filters.search || filters.q || '').trim().toLowerCase();
+  const exactFilters = Object.entries(filters).filter(([key, value]) => (
+    !ignoredKeys.has(key) &&
+    key !== 'search' &&
+    key !== 'q' &&
+    String(value ?? '').trim() !== ''
+  ));
+
+  return items.filter((item) => {
+    const exactMatch = exactFilters.every(([key, value]) => String(item?.[key] ?? '') === String(value));
+    if (!exactMatch) return false;
+    if (!search) return true;
+    return [item?.title, item?.content, item?.shortcut, item?.customerName, item?.customerPhone]
+      .some((candidate) => String(candidate || '').toLowerCase().includes(search));
+  });
+};
+
+const getEntityListLimit = (entityName, limitRaw) => {
+  const requested = parsePositiveInteger(limitRaw, 0);
+  const defaults = {
+    QuickReply: 100,
+    QuickReplySchedule: 50,
+  };
+  const max = {
+    QuickReply: 100,
+    QuickReplySchedule: 100,
+  };
+  if (!defaults[entityName]) return requested;
+  return Math.min(requested || defaults[entityName], max[entityName]);
+};
+
+const paginateEntityItems = (items, { limit = 0, page = '', offset = '' } = {}) => {
+  const normalizedLimit = parsePositiveInteger(limit, 0);
+  if (!normalizedLimit) return items;
+  const pageNumber = parsePositiveInteger(page, 0);
+  const offsetNumber = parsePositiveInteger(offset, 0);
+  const start = pageNumber > 0 ? (pageNumber - 1) * normalizedLimit : offsetNumber;
+  return items.slice(start, start + normalizedLimit);
 };
 
 const createId = (entityName, payload) => {
@@ -5198,6 +5251,65 @@ const stripSensitiveEntity = (entityName, value) => {
 
   return value;
 };
+
+const getQuickReplyPreviewContent = (reply = {}) => {
+  const direct = String(reply.content || '').trim();
+  if (direct) return direct;
+  const actions = Array.isArray(reply.actions) ? reply.actions : [];
+  const firstAction = actions.find((action) => String(action?.content || action?.caption || '').trim());
+  return String(firstAction?.content || firstAction?.caption || '').trim();
+};
+
+const shapeEntityForCollection = (entityName, item = {}, options = {}) => {
+  if (entityName === 'QuickReply') {
+    const includeActions = String(options.include || '').split(',').map((part) => part.trim()).includes('actions');
+    const actions = Array.isArray(item.actions) ? item.actions : [];
+    return {
+      id: String(item.id || ''),
+      title: String(item.title || '').trim(),
+      content: getQuickReplyPreviewContent(item),
+      shortcut: String(item.shortcut || '').trim(),
+      category: String(item.category || 'other').trim() || 'other',
+      categoryId: String(item.categoryId || '').trim(),
+      type: String(item.type || actions[0]?.type || 'text').trim() || 'text',
+      usageCount: Math.max(0, Number.isFinite(Number(item.usageCount)) ? Number(item.usageCount) : 0),
+      actions: includeActions ? actions : [],
+      actionCount: actions.length,
+      created_date: String(item.created_date || item.createdAt || ''),
+      updated_date: String(item.updated_date || item.updatedAt || ''),
+    };
+  }
+
+  if (entityName === 'QuickReplySchedule') {
+    return {
+      id: String(item.id || ''),
+      title: String(item.title || '').trim(),
+      conversationId: String(item.conversationId || '').trim(),
+      customerId: String(item.customerId || '').trim(),
+      customerName: String(item.customerName || '').trim(),
+      customerPhone: String(item.customerPhone || '').trim(),
+      quickReplyId: String(item.quickReplyId || '').trim(),
+      scheduledDate: String(item.scheduledDate || '').trim(),
+      scheduledTime: String(item.scheduledTime || '').trim(),
+      scheduledAt: String(item.scheduledAt || '').trim(),
+      windowExpiresAt: String(item.windowExpiresAt || '').trim(),
+      status: String(item.status || 'pending').trim() || 'pending',
+      deliveryType: String(item.deliveryType || '').trim(),
+      hsmTemplateId: String(item.hsmTemplateId || '').trim(),
+      hsmTemplateName: String(item.hsmTemplateName || '').trim(),
+      hsmLanguage: String(item.hsmLanguage || 'pt_BR').trim() || 'pt_BR',
+      createdBy: String(item.createdBy || '').trim(),
+      createdByName: String(item.createdByName || '').trim(),
+      created_date: String(item.created_date || ''),
+      updated_date: String(item.updated_date || ''),
+    };
+  }
+
+  return stripSensitiveEntity(entityName, item);
+};
+
+const shapeEntityCollectionForClient = (entityName, items = [], options = {}) =>
+  items.map((item) => shapeEntityForCollection(entityName, item, options));
 
 const resolveSessionContext = async (store, req) => {
   const token = getSessionTokenFromRequest(req);
@@ -11810,14 +11922,18 @@ const server = http.createServer(async (req, res) => {
       const store = await readStore();
       const items = Array.isArray(store[collectionName]) ? store[collectionName] : [];
       const filters = Object.fromEntries(url.searchParams.entries());
-      const sortBy = filters.sort || '';
-      const limit = filters.limit || '';
+      const sortBy = filters.sort || filters.sortBy || '';
+      const limit = getEntityListLimit(entityName, filters.limit || '');
       delete filters.sort;
+      delete filters.sortBy;
       delete filters.limit;
-      const filtered = items.filter((item) =>
-        Object.entries(filters).every(([key, value]) => String(item?.[key] ?? '') === String(value)),
-      );
-      return sendJson(res, 200, stripSensitiveEntity(entityName, applyLimit(sortItems(filtered, sortBy), limit)));
+      const filtered = applyEntityFilters(items, filters);
+      const paginated = paginateEntityItems(sortItems(filtered, sortBy), {
+        limit,
+        page: url.searchParams.get('page') || '',
+        offset: url.searchParams.get('offset') || '',
+      });
+      return sendJson(res, 200, shapeEntityCollectionForClient(entityName, paginated, Object.fromEntries(url.searchParams.entries())));
     }
 
     const entityCollectionMatch = url.pathname.match(/^\/api\/local\/entities\/([A-Za-z]+)$/);
@@ -11829,9 +11945,16 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'GET') {
         const store = await readStore();
         const items = Array.isArray(store[collectionName]) ? store[collectionName] : [];
-        const sortBy = url.searchParams.get('sort') || '';
-        const limit = url.searchParams.get('limit') || '';
-        return sendJson(res, 200, stripSensitiveEntity(entityName, applyLimit(sortItems(items, sortBy), limit)));
+        const filters = Object.fromEntries(url.searchParams.entries());
+        const sortBy = url.searchParams.get('sort') || url.searchParams.get('sortBy') || '';
+        const limit = getEntityListLimit(entityName, url.searchParams.get('limit') || '');
+        const filtered = applyEntityFilters(items, filters);
+        const paginated = paginateEntityItems(sortItems(filtered, sortBy), {
+          limit,
+          page: url.searchParams.get('page') || '',
+          offset: url.searchParams.get('offset') || '',
+        });
+        return sendJson(res, 200, shapeEntityCollectionForClient(entityName, paginated, filters));
       }
 
       if (req.method === 'POST') {
@@ -11926,6 +12049,14 @@ const server = http.createServer(async (req, res) => {
       const itemId = entityItemMatch[2];
       const collectionName = getCollectionName(entityName);
       if (!collectionName) return sendJson(res, 404, { error: 'Entity not found' });
+
+      if (req.method === 'GET') {
+        const store = await readStore();
+        const items = Array.isArray(store[collectionName]) ? store[collectionName] : [];
+        const item = items.find((entry) => String(entry?.id) === String(itemId));
+        if (!item) return sendJson(res, 404, { error: 'Item not found' });
+        return sendJson(res, 200, stripSensitiveEntity(entityName, item));
+      }
 
       if (req.method === 'PUT') {
         const payload = await readBody(req);

@@ -5,13 +5,25 @@ import { publishRealtimeEvent } from '../realtime/pubsub.mjs';
 const text = (value) => String(value || '').trim();
 const strings = (value) => Array.from(new Set((Array.isArray(value) ? value : []).map(text).filter(Boolean)));
 const slug = (value) => text(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const queueListCache = new Map();
 
-export const listQueues = async ({ auth }) => (await listQueueConfigurations({ tenantId: auth.tenantId })).map((row) => ({
-  id: row.id, name: row.name, description: row.description || '', icon_key: row.icon_key || 'headphones',
-  is_active: row.is_active, priority: Number(row.priority || 100), phone_numbers: [],
-  label_ids: row.label_ids || [], user_ids: row.user_ids || [], user_emails: row.user_emails || [],
-  created_date: row.created_at, updated_date: row.updated_at,
-}));
+const clearQueueListCache = (tenantId) => {
+  queueListCache.delete(String(tenantId || '').trim());
+};
+
+export const listQueues = async ({ auth }) => {
+  const tenantId = String(auth.tenantId || '').trim();
+  const cached = queueListCache.get(tenantId);
+  if (cached && cached.expiresAt > Date.now()) return cached.items;
+  const items = (await listQueueConfigurations({ tenantId })).map((row) => ({
+    id: row.id, name: row.name, description: row.description || '', icon_key: row.icon_key || 'headphones',
+    is_active: row.is_active, priority: Number(row.priority || 100), phone_numbers: [],
+    label_ids: row.label_ids || [], user_ids: row.user_ids || [], user_emails: row.user_emails || [],
+    created_date: row.created_at, updated_date: row.updated_at,
+  }));
+  queueListCache.set(tenantId, { expiresAt: Date.now() + 10000, items });
+  return items;
+};
 
 export const saveQueue = async ({ auth, queueId = '', input = {} }) => {
   const name = text(input.name);
@@ -34,6 +46,7 @@ export const saveQueue = async ({ auth, queueId = '', input = {} }) => {
       type: 'queue_updated', data: { conversationId: conversation.id, conversation },
     });
   }
+  clearQueueListCache(auth.tenantId);
   return (await listQueues({ auth })).find((queue) => queue.id === id);
 };
 
@@ -51,5 +64,6 @@ export const removeQueue = async ({ auth, queueId }) => {
       type: 'queue_updated', data: { conversationId: conversation.id, conversation },
     });
   }
+  clearQueueListCache(auth.tenantId);
   return { ok: true, id: queueId, deactivated: true };
 };

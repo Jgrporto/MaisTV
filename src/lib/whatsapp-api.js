@@ -853,12 +853,22 @@ export const markChatConversationRead = async (conversationId, options = {}) => 
   });
 };
 
+const chatMediaUrlCache = new Map();
+
 export const fetchChatMediaUrl = async (mediaId, variant = 'thumbnail') => {
   const safeMediaId = String(mediaId || '').trim();
   if (!safeMediaId) return null;
+  const cacheKey = `${safeMediaId}:${variant}`;
+  const cached = chatMediaUrlCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.url;
   const suffix = variant === 'original' ? 'signed-url' : 'thumbnail';
   const data = await requestChatJson(`/api/media/${encodeURIComponent(safeMediaId)}/${suffix}`, { method: 'GET' });
-  return data?.url || data?.signedUrl || data?.signed_url || null;
+  const url = data?.url || data?.signedUrl || data?.signed_url || null;
+  if (url) {
+    const ttlSeconds = Math.max(30, Number(data?.expiresIn || data?.expires_in || 300));
+    chatMediaUrlCache.set(cacheKey, { url, expiresAt: Date.now() + Math.max(15, ttlSeconds - 15) * 1000 });
+  }
+  return url;
 };
 
 export const fetchWhatsappConversationDetail = async (conversationOrId, options = {}) => {

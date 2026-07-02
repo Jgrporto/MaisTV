@@ -52,6 +52,7 @@ const publishPresence = ({ tenantId, userId, presence }) => publishRealtimeEvent
 });
 
 const isAssignmentEnqueueEnabled = () => ['1', 'true', 'yes', 'on'].includes(String(process.env.ASSIGNMENT_ENQUEUE_ENABLED || '').trim().toLowerCase());
+const attendingUsersCache = new Map();
 
 const enqueueAssignmentJob = async ({ tenantId, conversation, source, ignoreQueueAge = false }) => {
   const enabled = isAssignmentEnqueueEnabled();
@@ -227,12 +228,30 @@ export const startPresence = async ({ auth }) => {
   if (!current || current.status !== presence.status || String(current.paused_until || '') !== String(presence.paused_until || '')) {
     await publishPresence({ tenantId: auth.tenantId, userId: auth.userId, presence: shaped });
   }
-  const pendingAssignmentSweep = pauseActive || isPrivilegedChatUser(auth) ? { skipped: true, reason: pauseActive ? 'presence_paused' : 'privileged_user', jobs: [] } : await enqueuePendingAssignmentsForQueues({
+  if (!pauseActive && !isPrivilegedChatUser(auth)) {
+    void enqueuePendingAssignmentsForQueues({
+      tenantId: auth.tenantId,
+      queueIds,
+      source: 'presence_start',
+    }).catch(() => {});
+  }
+  return { ok: true, presence: shaped, distributionPause: { active: pauseActive, pausedUntil: presence.paused_until, remainingMs: pauseActive ? Date.parse(presence.paused_until)-Date.now() : 0, reason: presence.pause_reason || '' } };
+};
+
+export const heartbeatPresence = async ({ auth }) => {
+  const current = await getAgentPresence({ tenantId: auth.tenantId, userId: auth.userId });
+  const pauseActive = current?.status === 'paused' && Date.parse(String(current.paused_until || '')) > Date.now();
+  const presence = await upsertAgentPresence({
     tenantId: auth.tenantId,
-    queueIds,
-    source: 'presence_start',
+    userId: auth.userId,
+    userName: userNameOf(auth),
+    userEmail: userEmailOf(auth),
+    role: roleOf(auth),
+    status: pauseActive ? 'paused' : 'online',
+    pausedUntil: pauseActive ? current.paused_until : null,
+    pauseReason: pauseActive ? current.pause_reason : null,
   });
-  return { ok: true, presence: shaped, distributionPause: { active: pauseActive, pausedUntil: presence.paused_until, remainingMs: pauseActive ? Date.parse(presence.paused_until)-Date.now() : 0, reason: presence.pause_reason || '' }, pendingAssignmentSweep };
+  return { ok: true, presence: shapePresence(presence) };
 };
 
 export const stopPresence = async ({ auth, recoverAssignments = true, reason = 'logout' }) => {
@@ -319,12 +338,14 @@ export const resumePresence = async ({ auth }) => {
   const presence = await upsertAgentPresence({ tenantId: auth.tenantId, userId: auth.userId, userName: userNameOf(auth), userEmail: userEmailOf(auth), role: roleOf(auth), status: 'online' });
   const shaped = shapePresence({ ...presence, queue_ids: queueIds });
   await publishPresence({ tenantId: auth.tenantId, userId: auth.userId, presence: shaped });
-  const pendingAssignmentSweep = isPrivilegedChatUser(auth) ? { skipped: true, reason: 'privileged_user', jobs: [] } : await enqueuePendingAssignmentsForQueues({
-    tenantId: auth.tenantId,
-    queueIds,
-    source: 'presence_resume',
-  });
-  return { ok: true, presence: shaped, distributionPause: { active: false, remainingMs: 0 }, pendingAssignmentSweep };
+  if (!isPrivilegedChatUser(auth)) {
+    void enqueuePendingAssignmentsForQueues({
+      tenantId: auth.tenantId,
+      queueIds,
+      source: 'presence_resume',
+    }).catch(() => {});
+  }
+  return { ok: true, presence: shaped, distributionPause: { active: false, remainingMs: 0 } };
 };
 export const getPresenceStatus = async ({ auth }) => {
   const row = await getAgentPresence({ tenantId: auth.tenantId, userId: auth.userId });
@@ -332,7 +353,15 @@ export const getPresenceStatus = async ({ auth }) => {
   const active = row?.status === 'paused' && Number.isFinite(pausedUntilMs) && pausedUntilMs > Date.now();
   return { ok: true, presence: row ? shapePresence(row) : null, distributionPause: { active, pausedUntil: row?.paused_until || null, remainingMs: active ? pausedUntilMs - Date.now() : 0, reason: row?.pause_reason || '' } };
 };
-export const getAttendingUsers = async ({ auth }) => (await listAgentPresence({ tenantId: auth.tenantId, ttlSeconds: Math.max(30, Number(process.env.ASSIGNMENT_PRESENCE_TTL_SECONDS || 90)) })).map(shapePresence);
+export const getAttendingUsers = async ({ auth }) => {
+  const ttlSeconds = Math.max(30, Number(process.env.ASSIGNMENT_PRESENCE_TTL_SECONDS || 90));
+  const cacheKey = `${auth.tenantId}:${ttlSeconds}`;
+  const cached = attendingUsersCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.items;
+  const items = (await listAgentPresence({ tenantId: auth.tenantId, ttlSeconds })).map(shapePresence);
+  attendingUsersCache.set(cacheKey, { expiresAt: Date.now() + 7500, items });
+  return items;
+};
 
 export const queueConversationAssignment = async ({ tenantId, conversationId, inboundMessageId, routeKey }) => {
   const enabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.ASSIGNMENT_ENQUEUE_ENABLED || '').trim().toLowerCase());

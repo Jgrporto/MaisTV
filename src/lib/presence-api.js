@@ -18,6 +18,15 @@ export const startAttendancePresence = async () => {
   });
 };
 
+export const heartbeatAttendancePresence = async () => {
+  return requestChatJson('/api/presence/heartbeat', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+};
+
 export const stopAttendancePresence = async ({ recoverAssignments = true, reason = 'attendance_stop' } = {}) => {
   return requestChatJson('/api/presence/stop', {
     method: 'POST',

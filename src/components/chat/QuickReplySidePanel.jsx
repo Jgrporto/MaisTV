@@ -108,8 +108,8 @@ export default function QuickReplySidePanel({ open, onClose, onExecute, conversa
   const queryClient = useQueryClient();
 
   const repliesQuery = useQuery({
-    queryKey: ['quick-replies'],
-    queryFn: () => listQuickReplies(),
+    queryKey: ['quick-replies', 'with-actions'],
+    queryFn: () => listQuickReplies({ includeActions: true, limit: 100 }),
     enabled: open,
   });
 

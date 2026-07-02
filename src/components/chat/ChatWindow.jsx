@@ -962,6 +962,7 @@ export default function ChatWindow({
   const [draftValue, setDraftValue] = useState('');
   const [messages, setMessages] = useState([]);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [backgroundDetailsEnabled, setBackgroundDetailsEnabled] = useState(false);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [hasOlderMessages, setHasOlderMessages] = useState(true);
@@ -1006,7 +1007,7 @@ export default function ChatWindow({
   const retryPayloadsRef = useRef(new Map());
   const nextOutgoingOrderRef = useRef(1);
   const queryClient = useQueryClient();
-  const paginatedMessagesQuery = useMessages(conversation, { enabled: ENABLE_NEW_CHAT_DATA_LAYER });
+  const paginatedMessagesQuery = useMessages(conversation, { enabled: false });
   const paginatedHasMoreRef = useRef(true);
   const currentUserId = String(currentUser?.id || currentUser?.email || '').trim();
   const currentUserName = String(currentUser?.full_name || currentUser?.name || currentUser?.username || 'Agente').trim();
@@ -1031,7 +1032,7 @@ export default function ChatWindow({
   const activeNewbrTestQuery = useQuery({
     queryKey: ['newbr-test-active', conversation?.id, conversation?.contact_phone],
     queryFn: () => fetchActiveNewbrTest({ conversationId: conversation?.id, phone: conversation?.contact_phone }),
-    enabled: Boolean(conversation?.id || conversation?.contact_phone),
+    enabled: backgroundDetailsEnabled && Boolean(conversation?.id || conversation?.contact_phone),
     staleTime: 30000,
     refetchInterval: 60000,
   });
@@ -1039,7 +1040,7 @@ export default function ChatWindow({
   const conversationTicketsQuery = useQuery({
     queryKey: ['conversation-tickets', conversation?.id],
     queryFn: () => listConversationTickets(conversation.id),
-    enabled: Boolean(conversation?.id),
+    enabled: backgroundDetailsEnabled && Boolean(conversation?.id),
     staleTime: 30000,
   });
 
@@ -1047,7 +1048,7 @@ export default function ChatWindow({
   const checkoutRenewalStatusQuery = useQuery({
     queryKey: ['checkout-renewal-customer-status', renewalCustomerPhone],
     queryFn: () => fetchCheckoutRenewalCustomerStatus(renewalCustomerPhone),
-    enabled: Boolean(renewalCustomerPhone),
+    enabled: backgroundDetailsEnabled && Boolean(renewalCustomerPhone),
     staleTime: 30000,
     refetchInterval: 60000,
   });
@@ -1351,6 +1352,7 @@ export default function ChatWindow({
       setHasOlderMessages(true);
       setHasHistoryMessages(true);
       setIsLoadingMessages(false);
+      setBackgroundDetailsEnabled(false);
       setIsLoadingOlder(false);
       setIsLoadingHistory(false);
       setDraftValue('');
@@ -1389,6 +1391,7 @@ export default function ChatWindow({
       setQuickReplyPanelOpen(false);
       setTavinhoPanelOpen(false);
       setIsLoadingMessages(true);
+      setBackgroundDetailsEnabled(false);
       setIsLoadingOlder(false);
       setIsLoadingHistory(false);
       setDraftValue('');
@@ -1411,16 +1414,13 @@ export default function ChatWindow({
       }
 
       try {
-        const [recentMessages, chatbotEvents] = await Promise.all([
-          fetchRecentMessagePage(INITIAL_MESSAGE_PAGE_SIZE),
-          fetchChatbotEvents(conversationId).catch(() => []),
-        ]);
+        const recentMessages = await fetchRecentMessagePage(INITIAL_MESSAGE_PAGE_SIZE);
 
         if (!active) return;
 
         const visibleRecentMessages = filterMostRecentMessageDays(recentMessages);
         setMessages((currentMessages) => {
-          const mergedMessages = mergeMessages(currentMessages, [...visibleRecentMessages, ...chatbotEvents]);
+          const mergedMessages = mergeMessages(currentMessages, visibleRecentMessages);
           void writeCachedMessages(conversationId, trimMessagesForCache(mergedMessages));
           return mergedMessages;
         });
@@ -1428,6 +1428,14 @@ export default function ChatWindow({
           (ENABLE_NEW_CHAT_DATA_LAYER ? paginatedHasMoreRef.current : recentMessages.length >= INITIAL_MESSAGE_PAGE_SIZE) ||
             visibleRecentMessages.length < recentMessages.length,
         );
+        void fetchChatbotEvents(conversationId).then((chatbotEvents) => {
+          if (!active || !Array.isArray(chatbotEvents) || chatbotEvents.length === 0) return;
+          setMessages((currentMessages) => {
+            const mergedMessages = mergeMessages(currentMessages, chatbotEvents);
+            void writeCachedMessages(conversationId, trimMessagesForCache(mergedMessages));
+            return mergedMessages;
+          });
+        }).catch(() => {});
       } catch (error) {
         if (active && cachedMessages.length === 0) {
           toast.error(error?.message || 'Não foi possível carregar as mensagens.');
@@ -1435,6 +1443,7 @@ export default function ChatWindow({
       } finally {
         if (active) {
           setIsLoadingMessages(false);
+          setBackgroundDetailsEnabled(true);
           requestAnimationFrame(() => {
             messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
           });
