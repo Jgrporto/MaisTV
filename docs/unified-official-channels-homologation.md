@@ -52,6 +52,7 @@ Durante a transicao, o mapeamento antigo por rota e somente fallback quando aind
 
 - texto livre: exige janela aberta e usa o ultimo canal inbound;
 - imagem, audio, video, documento e interativo: usam o ultimo canal inbound;
+- imagem, audio, video e documento enviados pelo painel sao persistidos em `media_files` e no storage antes de entrar na fila outbound;
 - chatbot: passa pelo mesmo worker e pela mesma validacao;
 - template/HSM: o resolvedor seleciona `default` independentemente do ultimo canal;
 - o worker revalida a janela antes de chamar a Meta;

@@ -22,9 +22,38 @@ export const upsertMediaMetadata = async (client, data) => (await client.query(`
     JSON.stringify(data.metadata || {}),
   ])).rows[0];
 
+export const upsertOutboundMedia = async (client, data) => (await client.query(`INSERT INTO media_files
+  (id,tenant_id,conversation_id,type,mime_type,original_filename,size_bytes,storage_key,thumbnail_key,
+   sha256,metadata_json,status,available_at)
+  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,'available',now())
+  ON CONFLICT (id) DO UPDATE SET
+    mime_type=EXCLUDED.mime_type,original_filename=EXCLUDED.original_filename,size_bytes=EXCLUDED.size_bytes,
+    storage_key=EXCLUDED.storage_key,thumbnail_key=EXCLUDED.thumbnail_key,sha256=EXCLUDED.sha256,
+    metadata_json=media_files.metadata_json || EXCLUDED.metadata_json,status='available',error_message=NULL,
+    available_at=COALESCE(media_files.available_at,now()),updated_at=now()
+  RETURNING *`, [
+    data.id,
+    data.tenantId,
+    data.conversationId,
+    data.type,
+    data.mimeType || null,
+    data.filename || null,
+    data.sizeBytes || null,
+    data.storageKey,
+    data.thumbnailKey || null,
+    data.sha256 || null,
+    JSON.stringify(data.metadata || {}),
+  ])).rows[0];
+
 export const linkMediaToMessage = async (client, { tenantId, mediaId, messageId }) => client.query(
   'UPDATE media_files SET message_id=$3,updated_at=now() WHERE tenant_id=$1 AND id=$2 AND message_id IS DISTINCT FROM $3',
   [tenantId, mediaId, messageId],
+);
+
+export const setMediaProviderId = async ({ tenantId, id, providerMediaId }) => query(
+  `UPDATE media_files SET provider_media_id=$3,updated_at=now()
+   WHERE tenant_id=$1 AND id=$2 RETURNING *`,
+  [tenantId, id, providerMediaId || null],
 );
 
 export const markMediaProcessing = async ({ tenantId, id }) => query(`UPDATE media_files SET

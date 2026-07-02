@@ -4,6 +4,8 @@ import { buildPhoneLookupKeys, normalizePhone, phonesMatch } from '../utils/phon
 import { classifyCustomerRows, STANDARD_LABELS } from './customer-profile.service.mjs';
 import { resolveOutboundChannel } from './channel-routing.service.mjs';
 import { resolveConversationReplyRouteSelector } from '../../src/lib/conversation-channel.js';
+import { decodeOutboundMediaInput } from './outbound-media.service.mjs';
+import { buildStoredMediaMessagePayload } from './meta-outbound-media.service.mjs';
 
 test('normalizes Brazilian phone variants to one identity', () => {
   assert.equal(normalizePhone('5524998210417'), '5524998210417');
@@ -104,4 +106,54 @@ test('persisted last inbound channel wins over a stale loaded message page', () 
 
 test('empty attendance state does not crash while no conversation is selected', () => {
   assert.equal(resolveConversationReplyRouteSelector({ conversation: null, messages: null }), null);
+});
+
+test('decodes outbound media for durable storage before enqueueing', () => {
+  const media = decodeOutboundMediaInput({
+    type: 'image',
+    dataBase64: 'data:image/png;base64,aGVsbG8=',
+    filename: 'teste.png',
+    caption: 'Imagem persistida',
+  });
+  assert.equal(media.type, 'image');
+  assert.equal(media.mimeType, 'image/png');
+  assert.equal(media.filename, 'teste.png');
+  assert.equal(media.caption, 'Imagem persistida');
+  assert.equal(media.body.toString('utf8'), 'hello');
+});
+
+test('rejects unsupported outbound media types', () => {
+  assert.throws(
+    () => decodeOutboundMediaInput({ type: 'sticker', dataBase64: 'aGVsbG8=' }),
+    /Tipo de midia invalido/,
+  );
+});
+
+test('builds Meta payloads for all durable outbound media types', () => {
+  assert.deepEqual(buildStoredMediaMessagePayload({
+    conversation: { contact_phone: '5524999157259' },
+    message: { type: 'image', client_message_id: 'client-1', raw_json: { caption: 'Foto' } },
+    providerMediaId: 'meta-media-1',
+  }), {
+    messaging_product: 'whatsapp',
+    to: '5524999157259',
+    type: 'image',
+    image: { id: 'meta-media-1', caption: 'Foto' },
+    biz_opaque_callback_data: 'client-1',
+  });
+  assert.deepEqual(buildStoredMediaMessagePayload({
+    conversation: { contact_phone: '5524999157259' },
+    message: { type: 'document', client_message_id: 'client-2', raw_json: { filename: 'arquivo.pdf' } },
+    providerMediaId: 'meta-media-2',
+  }).document, { id: 'meta-media-2', filename: 'arquivo.pdf' });
+  assert.deepEqual(buildStoredMediaMessagePayload({
+    conversation: { contact_phone: '5524999157259' },
+    message: { type: 'audio', client_message_id: 'client-3' },
+    providerMediaId: 'meta-media-3',
+  }).audio, { id: 'meta-media-3' });
+  assert.deepEqual(buildStoredMediaMessagePayload({
+    conversation: { contact_phone: '5524999157259' },
+    message: { type: 'video', client_message_id: 'client-4', raw_json: { caption: 'Video' } },
+    providerMediaId: 'meta-media-4',
+  }).video, { id: 'meta-media-4', caption: 'Video' });
 });

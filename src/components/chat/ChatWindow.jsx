@@ -1982,6 +1982,7 @@ export default function ChatWindow({
         );
 
         const result = await sendWhatsappImageMessage({
+          conversationId: conversation.id,
           to: conversation.contact_phone,
           imageBase64,
           mimetype: mimetype || file?.type || 'image/jpeg',
@@ -2059,6 +2060,7 @@ export default function ChatWindow({
         );
 
         const result = await sendWhatsappAudioMessage({
+          conversationId: conversation.id,
           to: conversation.contact_phone,
           audioBase64: payload,
           mimetype: mimetype || file?.type || 'audio/ogg',
@@ -2136,6 +2138,7 @@ export default function ChatWindow({
         );
 
         const result = await sendWhatsappDocumentMessage({
+          conversationId: conversation.id,
           to: conversation.contact_phone,
           documentBase64,
           mimetype: mimetype || file?.type || 'application/octet-stream',
@@ -2202,6 +2205,7 @@ export default function ChatWindow({
         );
 
         const result = await sendWhatsappVideoMessage({
+          conversationId: conversation.id,
           to: conversation.contact_phone,
           videoBase64,
           mimetype: mimetype || file?.type || 'video/mp4',

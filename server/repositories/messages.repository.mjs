@@ -25,20 +25,38 @@ export const insertInboundMessage = async (client, data) => (await client.query(
   ON CONFLICT (tenant_id,provider_message_id) WHERE provider_message_id IS NOT NULL DO NOTHING RETURNING *`,
   [data.tenantId,data.conversationId,data.providerMessageId,data.type,data.body || null,data.mediaId||null,JSON.stringify(data.raw),data.createdAt,data.routeKey||null,data.phoneNumberId||null])).rows[0] || null;
 export const insertPendingOutbound = async (data, executor = null) => (await (executor || { query }).query(`INSERT INTO messages
-  (tenant_id,conversation_id,client_message_id,direction,sender_type,type,body,status,raw_json,route_key,phone_number_id)
-  VALUES ($1,$2,$3,'outbound','agent',$4,$5,'pending',$6::jsonb,$7,$8)
+  (tenant_id,conversation_id,client_message_id,direction,sender_type,type,body,status,raw_json,route_key,phone_number_id,media_id,reply_to_message_id)
+  VALUES ($1,$2,$3,'outbound','agent',$4,$5,'pending',$6::jsonb,$7,$8,$9,$10)
   ON CONFLICT (tenant_id,client_message_id) DO UPDATE SET client_message_id=EXCLUDED.client_message_id RETURNING *`,
-  [data.tenantId,data.conversationId,data.clientMessageId,data.type,data.body || null,JSON.stringify(data.raw || {}),data.routeKey||null,data.phoneNumberId||null])).rows[0];
+  [data.tenantId,data.conversationId,data.clientMessageId,data.type,data.body || null,JSON.stringify(data.raw || {}),data.routeKey||null,data.phoneNumberId||null,data.mediaId||null,data.replyToMessageId||null])).rows[0];
+export const findMessageByClientMessageId = async (tenantId, clientMessageId) => (await query(
+  'SELECT * FROM messages WHERE tenant_id=$1 AND client_message_id=$2',
+  [tenantId, clientMessageId],
+)).rows[0] || null;
 export const findMessageById = async (tenantId, id) => (await query('SELECT * FROM messages WHERE tenant_id=$1 AND id=$2', [tenantId,id])).rows[0] || null;
 export const findMessageWithMedia = async (tenantId, id) => (await query(`SELECT messages.*,
   media_files.storage_key,media_files.mime_type AS media_mime_type,media_files.status AS media_status,
+  media_files.original_filename AS media_original_filename,media_files.size_bytes AS media_size_bytes,
+  reply.provider_message_id AS reply_provider_message_id,
   media_files.id AS joined_media_id,conversations.assigned_agent_id,conversations.queue_id,conversations.service_id
   FROM messages
   JOIN conversations ON conversations.tenant_id=messages.tenant_id AND conversations.id=messages.conversation_id
   LEFT JOIN media_files ON media_files.tenant_id=messages.tenant_id AND media_files.id=messages.media_id
+  LEFT JOIN messages reply ON reply.tenant_id=messages.tenant_id AND reply.id=messages.reply_to_message_id
   WHERE messages.tenant_id=$1 AND messages.id=$2`, [tenantId,id])).rows[0] || null;
 export const claimMessageForSending = async (tenantId,id) => (await query("UPDATE messages SET status='sending', error_message=NULL WHERE tenant_id=$1 AND id=$2 AND status='pending' RETURNING *",[tenantId,id])).rows[0]||null;
-export const resetMessagePending = async (tenantId,id) => query("UPDATE messages SET status='pending' WHERE tenant_id=$1 AND id=$2 AND status='sending'",[tenantId,id]);
+export const claimMessageForMediaUpload = async (tenantId,id) => (await query(
+  "UPDATE messages SET status='uploading',error_message=NULL WHERE tenant_id=$1 AND id=$2 AND status IN ('pending','uploading') RETURNING *",
+  [tenantId,id],
+)).rows[0]||null;
+export const markMediaMessageSending = async (tenantId,id) => (await query(
+  "UPDATE messages SET status='sending' WHERE tenant_id=$1 AND id=$2 AND status='uploading' RETURNING *",
+  [tenantId,id],
+)).rows[0]||null;
+export const resetMessagePending = async (tenantId,id) => query(
+  "UPDATE messages SET status='pending' WHERE tenant_id=$1 AND id=$2 AND status IN ('sending','uploading')",
+  [tenantId,id],
+);
 export const markMessageSent = async (tenantId, id, providerMessageId) => query("UPDATE messages SET provider_message_id=$3,status='sent',error_message=NULL,sent_at=now() WHERE tenant_id=$1 AND id=$2", [tenantId,id,providerMessageId]);
 export const setMessageOutboundChannel = async (tenantId, id, { routeKey, phoneNumberId }) => query(
   'UPDATE messages SET route_key=$3,phone_number_id=$4 WHERE tenant_id=$1 AND id=$2',

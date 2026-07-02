@@ -3,9 +3,12 @@ import { QUEUE_NAMES } from '../queues/queue-names.mjs';
 import { startWorker } from './worker-runtime.mjs';
 import {
   claimMessageForSending,
-  findMessageById,
+  claimMessageForMediaUpload,
+  findMessageWithMedia,
+  markMediaMessageSending,
   markMessageFailed,
   markMessageSent,
+  resetMessagePending,
   setMessageOutboundChannel,
 } from '../repositories/messages.repository.mjs';
 import { getConversation } from '../repositories/conversations.repository.mjs';
@@ -13,6 +16,7 @@ import { publishRealtimeEvent } from '../realtime/pubsub.mjs';
 import { resolveMetaConfig } from '../services/meta-config.service.mjs';
 import { getLogger } from '../services/logger.service.mjs';
 import { resolveOutboundChannel } from '../services/channel-routing.service.mjs';
+import { buildStoredMediaMessagePayload, uploadStoredMediaToMeta } from '../services/meta-outbound-media.service.mjs';
 import {
   getChatbotOutboundPermission,
   handleChatbotOutboundFailed,
@@ -67,7 +71,10 @@ const buildInteractivePayload = (message) => {
   };
 };
 
-const buildMetaMessagePayload = ({ conversation, message }) => {
+const buildMetaMessagePayload = ({ conversation, message, providerMediaId = '' }) => {
+  if (['image', 'audio', 'video', 'document'].includes(message.type)) {
+    return buildStoredMediaMessagePayload({ conversation, message, providerMediaId });
+  }
   if (message.type === 'interactive') {
     return {
       messaging_product: 'whatsapp',
@@ -88,7 +95,7 @@ const buildMetaMessagePayload = ({ conversation, message }) => {
 await startWorker(QUEUE_NAMES.outbound, async (job) => {
   const logger = await getLogger();
   const { tenantId, messageId } = job.data;
-  const message = await findMessageById(tenantId, messageId);
+  const message = await findMessageWithMedia(tenantId, messageId);
   if (!message) throw new Error(`Outbound message ${messageId} not found.`);
   const conversation = await getConversation(tenantId, message.conversation_id);
   const eventScope = {
@@ -118,7 +125,10 @@ await startWorker(QUEUE_NAMES.outbound, async (job) => {
     return { providerMessageId: message.provider_message_id, alreadySent: true };
   }
 
-  const claimed = await claimMessageForSending(tenantId, message.id);
+  const isStoredMedia = ['image', 'audio', 'video', 'document'].includes(message.type);
+  const claimed = isStoredMedia
+    ? await claimMessageForMediaUpload(tenantId, message.id)
+    : await claimMessageForSending(tenantId, message.id);
   if (!claimed) {
     throw new Error(`Outbound message ${message.id} is in uncertain state ${message.status}; automatic resend was blocked to avoid duplication.`);
   }
@@ -160,13 +170,38 @@ await startWorker(QUEUE_NAMES.outbound, async (job) => {
   }
 
   let response;
+  let providerMediaId = '';
+  if (isStoredMedia) {
+    try {
+      providerMediaId = await uploadStoredMediaToMeta({ message, token, phoneId });
+      if (!await markMediaMessageSending(tenantId, message.id)) {
+        throw Object.assign(new Error(`Outbound media message ${message.id} could not transition to sending.`), { retryable: true });
+      }
+    } catch (error) {
+      const maxAttempts = Number(job.opts?.attempts || 1);
+      const lastAttempt = Number(job.attemptsMade || 0) + 1 >= maxAttempts;
+      if (error.retryable !== false && !lastAttempt) {
+        await resetMessagePending(tenantId, message.id);
+        throw error;
+      }
+      const errorMessage = String(error?.message || error || 'Outbound media upload failed.').slice(0, 2000);
+      await markMessageFailed(tenantId, message.id, errorMessage);
+      await publishRealtimeEvent({
+        ...eventScope,
+        type: 'message_status_updated',
+        data: { messageId: message.id, status: 'failed', errorMessage },
+      });
+      logger.warn({ tenantId, messageId: message.id, conversationId: conversation.id, err: error }, 'outbound media upload failed');
+      return { failed: true, error: errorMessage };
+    }
+  }
   try {
     response = await fetch(
       `https://graph.facebook.com/${process.env.META_GRAPH_VERSION || 'v23.0'}/${phoneId}/messages`,
       {
         method: 'POST',
         headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-        body: JSON.stringify(buildMetaMessagePayload({ conversation, message })),
+        body: JSON.stringify(buildMetaMessagePayload({ conversation, message, providerMediaId })),
       },
     );
   } catch (error) {

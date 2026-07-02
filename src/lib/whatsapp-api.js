@@ -1070,6 +1070,7 @@ export const sendWhatsappTextMessage = async ({ conversationId, to, text, contex
 };
 
 export const sendWhatsappImageMessage = async ({
+  conversationId,
   to,
   imageBase64,
   mimetype,
@@ -1081,6 +1082,21 @@ export const sendWhatsappImageMessage = async ({
   routeSelector,
   clientMessageId,
 }) => {
+  if (ENABLE_NEW_CHAT_DATA_LAYER && String(conversationId || '').trim()) {
+    return await requestChatJson('/api/media/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversationId,
+        type: 'image',
+        dataBase64: imageBase64,
+        mimeType: mimetype,
+        caption: caption || '',
+        replyToMessageId: contextMessageId || null,
+        clientMessageId: clientMessageId || null,
+      }),
+    });
+  }
   return await requestWhatsappJson('/api/whatsapp/send-image', {
     method: 'POST',
     headers: {
@@ -1101,6 +1117,7 @@ export const sendWhatsappImageMessage = async ({
 };
 
 export const sendWhatsappAudioMessage = async ({
+  conversationId,
   to,
   audioBase64,
   mimetype,
@@ -1112,6 +1129,20 @@ export const sendWhatsappAudioMessage = async ({
   routeSelector,
   clientMessageId,
 }) => {
+  if (ENABLE_NEW_CHAT_DATA_LAYER && String(conversationId || '').trim()) {
+    return await requestChatJson('/api/media/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversationId,
+        type: 'audio',
+        dataBase64: audioBase64,
+        mimeType: mimetype,
+        replyToMessageId: contextMessageId || null,
+        clientMessageId: clientMessageId || null,
+      }),
+    });
+  }
   return await requestWhatsappJson('/api/whatsapp/send-audio', {
     method: 'POST',
     headers: {
@@ -1132,6 +1163,7 @@ export const sendWhatsappAudioMessage = async ({
 };
 
 export const sendWhatsappDocumentMessage = async ({
+  conversationId,
   to,
   documentBase64,
   mimetype,
@@ -1144,6 +1176,22 @@ export const sendWhatsappDocumentMessage = async ({
   routeSelector,
   clientMessageId,
 }) => {
+  if (ENABLE_NEW_CHAT_DATA_LAYER && String(conversationId || '').trim()) {
+    return await requestChatJson('/api/media/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversationId,
+        type: 'document',
+        dataBase64: documentBase64,
+        mimeType: mimetype,
+        filename: filename || '',
+        caption: caption || '',
+        replyToMessageId: contextMessageId || null,
+        clientMessageId: clientMessageId || null,
+      }),
+    });
+  }
   return await requestWhatsappJson('/api/whatsapp/send-document', {
     method: 'POST',
     headers: {
@@ -1165,6 +1213,7 @@ export const sendWhatsappDocumentMessage = async ({
 };
 
 export const sendWhatsappVideoMessage = async ({
+  conversationId,
   to,
   videoBase64,
   mimetype,
@@ -1177,6 +1226,22 @@ export const sendWhatsappVideoMessage = async ({
   routeSelector,
   clientMessageId,
 }) => {
+  if (ENABLE_NEW_CHAT_DATA_LAYER && String(conversationId || '').trim()) {
+    return await requestChatJson('/api/media/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversationId,
+        type: 'video',
+        dataBase64: videoBase64,
+        mimeType: mimetype,
+        filename: filename || '',
+        caption: caption || '',
+        replyToMessageId: contextMessageId || null,
+        clientMessageId: clientMessageId || null,
+      }),
+    });
+  }
   return await requestWhatsappJson('/api/whatsapp/send-video', {
     method: 'POST',
     headers: {

@@ -12,6 +12,7 @@ LOCAL_STORAGE_ROOT=/var/lib/maistv-next/media
 LOCAL_STORAGE_INTERNAL_PREFIX=/protected-media
 MEDIA_SIGNED_URL_TTL_SECONDS=300
 MEDIA_ACCESS_TOKEN_SECRET=<secret-gerado-com-openssl-rand-hex-32>
+OUTBOUND_MEDIA_MAX_BYTES=52428800
 ```
 
 Nao configurar Cloudflare R2, AWS S3, MinIO ou outro object storage externo nesta etapa. O suporte a `s3` e `r2` permanece no codigo para uso futuro.
@@ -44,6 +45,12 @@ Com `STORAGE_PROVIDER=local`, essas rotas retornam URLs temporarias da propria A
 ```
 
 O token e assinado por HMAC com `MEDIA_ACCESS_TOKEN_SECRET` e escopado por tenant, usuario, media, chave do arquivo, tipo e expiracao.
+
+## Midia outbound
+
+Imagem, audio, video e documento enviados manualmente pelo painel passam por `POST /api/media/send`. O arquivo e gravado no storage e os metadados sao persistidos em `messages` e `media_files` antes do job BullMQ ser criado. Assim, falha de envio para a Meta nao remove o historico local e recarregar a tela nao depende de URL temporaria mantida pelo frontend.
+
+O storage nao possui remocao automatica nesta etapa. Os objetos permanecem ate uma politica de retencao ou lifecycle ser aprovada. `MEDIA_SIGNED_URL_TTL_SECONDS` controla apenas a validade da URL de acesso, nao a vida util do arquivo.
 
 ## Permissoes da pasta local
 
