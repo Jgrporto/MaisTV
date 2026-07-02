@@ -5155,6 +5155,8 @@ const requireAuthenticatedSession = async (req) => {
 
 const CHAT_ARCHITECTURE_PATHS = [
   '/api/conversations',
+  '/api/queues',
+  '/api/customer-profiles/',
   '/api/presence',
   '/api/messages/send',
   '/api/media/',

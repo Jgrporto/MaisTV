@@ -3,6 +3,7 @@ import test from 'node:test';
 import { buildPhoneLookupKeys, normalizePhone, phonesMatch } from '../utils/phone-normalization.mjs';
 import { classifyCustomerRows, STANDARD_LABELS } from './customer-profile.service.mjs';
 import { resolveOutboundChannel } from './channel-routing.service.mjs';
+import { resolveConversationReplyRouteSelector } from '../../src/lib/conversation-channel.js';
 
 test('normalizes Brazilian phone variants to one identity', () => {
   assert.equal(normalizePhone('5524998210417'), '5524998210417');
@@ -53,5 +54,50 @@ test('closed window blocks free text and templates always use default', () => {
   assert.equal(resolveOutboundChannel({ conversation, now: Date.parse('2026-07-01T12:00:00.000Z') }).reason, 'customer_window_closed');
   assert.deepEqual(resolveOutboundChannel({ conversation, deliveryKind: 'template' }), {
     allowed: true, deliveryKind: 'template', routeKey: 'default', phoneNumberId: '', reason: 'template_uses_default',
+  });
+});
+
+test('media reply uses the latest inbound channel from Postgres message fields', () => {
+  assert.deepEqual(resolveConversationReplyRouteSelector({
+    messages: [
+      { sender_type: 'client', route_key: 'vendas', phone_number_id: '111' },
+      { sender_type: 'agent', route_key: 'vendas', phone_number_id: '111' },
+      { sender_type: 'client', route_key: 'vendas2', phone_number_id: '222' },
+    ],
+  }), {
+    routeKey: 'vendas2',
+    phoneNumberId: '222',
+    displayPhoneNumber: null,
+  });
+});
+
+test('media reply falls back to the persisted last inbound conversation channel', () => {
+  assert.deepEqual(resolveConversationReplyRouteSelector({
+    conversation: {
+      last_inbound_route_key: 'vendas2',
+      last_inbound_phone_number_id: '222',
+      route_key: 'vendas',
+      phone_number_id: '111',
+    },
+  }), {
+    routeKey: 'vendas2',
+    phoneNumberId: '222',
+    displayPhoneNumber: null,
+  });
+});
+
+test('persisted last inbound channel wins over a stale loaded message page', () => {
+  assert.deepEqual(resolveConversationReplyRouteSelector({
+    conversation: {
+      last_inbound_route_key: 'vendas2',
+      last_inbound_phone_number_id: '222',
+    },
+    messages: [
+      { sender_type: 'client', route_key: 'vendas', phone_number_id: '111' },
+    ],
+  }), {
+    routeKey: 'vendas2',
+    phoneNumberId: '222',
+    displayPhoneNumber: null,
   });
 });

@@ -228,6 +228,8 @@ const resolveMessageRouteSelector = (message = {}, fallbackSelector = null) => {
   const fallback = fallbackSelector && typeof fallbackSelector === 'object' ? fallbackSelector : {};
   const selector = {
     phoneNumberId:
+      message.phone_number_id ||
+      message.phoneNumberId ||
       raw.phone_number_id ||
       raw.phoneNumberId ||
       raw.meta_phone_number_id ||
@@ -235,6 +237,8 @@ const resolveMessageRouteSelector = (message = {}, fallbackSelector = null) => {
       fallback.phoneNumberId ||
       null,
     displayPhoneNumber:
+      message.display_phone_number ||
+      message.displayPhoneNumber ||
       raw.display_phone_number ||
       raw.displayPhoneNumber ||
       raw.meta_display_phone_number ||
@@ -242,7 +246,16 @@ const resolveMessageRouteSelector = (message = {}, fallbackSelector = null) => {
       raw.from_phone_number ||
       fallback.displayPhoneNumber ||
       null,
-    routeKey: normalizeRouteKey(raw.meta_route_key || raw.routeKey || raw.sourceAccountKey || fallback.routeKey || ''),
+    routeKey: normalizeRouteKey(
+      message.route_key ||
+      message.routeKey ||
+      message.meta_route_key ||
+      raw.meta_route_key ||
+      raw.routeKey ||
+      raw.sourceAccountKey ||
+      fallback.routeKey ||
+      '',
+    ),
     sourceAccountId: String(
       raw.sourceAccountId ||
       raw.source_account_id ||

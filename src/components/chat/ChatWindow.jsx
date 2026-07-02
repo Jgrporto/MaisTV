@@ -79,6 +79,7 @@ import { ENABLE_CHAT_VIRTUALIZATION, ENABLE_NEW_CHAT_DATA_LAYER, MESSAGE_PAGE_LI
 import { useChatStore } from '@/features/chat/store/useChatStore';
 import { flattenMessagePages, useMessages } from '@/features/chat/hooks/useMessages';
 import { markConversationReadCaches } from '@/features/chat/cache-updaters';
+import { resolveConversationReplyRouteSelector } from '@/lib/conversation-channel';
 
 const INITIAL_MESSAGE_PAGE_SIZE = MESSAGE_PAGE_LIMIT;
 const OLDER_MESSAGE_PAGE_SIZE = MESSAGE_PAGE_LIMIT;
@@ -104,19 +105,6 @@ function getMessageClientOrder(message) {
 
 function normalizeComparableText(value) {
   return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
-}
-
-function resolveSafeRouteSelector(selector = null) {
-  if (!selector || typeof selector !== 'object') return null;
-  const phoneNumberId = String(selector.phoneNumberId || '').trim();
-  const displayPhoneNumber = String(selector.displayPhoneNumber || '').trim();
-  const routeKey = String(selector.routeKey || '').trim().toLowerCase();
-  if (!phoneNumberId && !displayPhoneNumber && !routeKey) return null;
-  return {
-    phoneNumberId: phoneNumberId || null,
-    displayPhoneNumber: displayPhoneNumber || null,
-    routeKey: routeKey || null,
-  };
 }
 
 function getFirstName(value, fallback = 'Mensagem') {
@@ -1176,14 +1164,8 @@ export default function ChatWindow({
   }, [allServices, conversation?.matching_service_ids, conversation?.queued_service_ids]);
 
   const activeManualRouteSelector = useMemo(() => {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index];
-      if (String(message?.sender_type || '').trim().toLowerCase() !== 'client') continue;
-      const selector = resolveSafeRouteSelector(message?.route_selector);
-      if (selector) return selector;
-    }
-    return resolveSafeRouteSelector(conversation?.active_route_selector) || resolveSafeRouteSelector(conversation?.default_route_selector);
-  }, [conversation?.active_route_selector, conversation?.default_route_selector, messages]);
+    return resolveConversationReplyRouteSelector({ conversation, messages });
+  }, [conversation, messages]);
 
   const sourceConversationIdsKey = useMemo(
     () => (Array.isArray(conversation?.source_conversation_ids) ? conversation.source_conversation_ids.join('|') : ''),
@@ -2441,6 +2423,7 @@ export default function ChatWindow({
                 buttons: uraPayload.buttons,
                 footer: uraPayload.footer,
                 agentName: currentUserName,
+                routeSelector: activeManualRouteSelector,
               });
               console.info(`URA enviada como botões com ${uraPayload.buttons.length} opções`);
             } catch (error) {

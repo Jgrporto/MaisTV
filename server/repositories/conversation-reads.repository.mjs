@@ -13,7 +13,10 @@ export const findMessageReadCursor = async ({ tenantId, conversationId, messageI
   return (await (executor || { query }).query(
     `SELECT id, created_at
      FROM messages
-     WHERE tenant_id=$1 AND conversation_id=$2 AND id=$3`,
+     WHERE tenant_id=$1 AND conversation_id=$2
+       AND (id::text=$3 OR provider_message_id=$3)
+     ORDER BY CASE WHEN id::text=$3 THEN 0 ELSE 1 END
+     LIMIT 1`,
     [tenantId, conversationId, messageId],
   )).rows[0] || null;
 };
