@@ -38,6 +38,49 @@ const getConversationId = (payload) => String(
   payload?.conversationId || payload?.conversation_id || payload?.message?.conversationId || payload?.message?.conversation_id || '',
 ).trim();
 
+const getPresenceUserId = (presence = {}) => String(presence?.user_id || presence?.userId || presence?.id || '').trim();
+const pendingReadMarks = new Map();
+
+const scheduleSelectedConversationRead = (conversationId, messageId) => {
+  const safeConversationId = String(conversationId || '').trim();
+  if (!safeConversationId) return;
+  const safeMessageId = String(messageId || '').trim();
+  const key = `${safeConversationId}:${safeMessageId || 'latest'}`;
+  if (pendingReadMarks.has(key)) {
+    window.clearTimeout(pendingReadMarks.get(key));
+  }
+  const timeoutId = window.setTimeout(() => {
+    pendingReadMarks.delete(key);
+    void markChatConversationRead(safeConversationId, { lastReadMessageId: safeMessageId || null }).catch(() => {});
+  }, 1200);
+  pendingReadMarks.set(key, timeoutId);
+};
+
+const updatePresenceCaches = (queryClient, payload = {}) => {
+  const presence = payload.presence && typeof payload.presence === 'object' ? payload.presence : payload;
+  const userId = getPresenceUserId(presence) || String(payload.userId || payload.user_id || '').trim();
+  if (!userId) return;
+
+  queryClient.setQueriesData({ queryKey: ['presence', 'status'] }, (current = {}) => {
+    const currentPresence = current?.presence && typeof current.presence === 'object' ? current.presence : {};
+    const currentUserId = getPresenceUserId(currentPresence);
+    if (currentUserId && currentUserId !== userId) return current;
+    return {
+      ...(current && typeof current === 'object' ? current : {}),
+      ok: true,
+      presence: { ...currentPresence, ...presence, user_id: userId, id: presence.id || userId },
+    };
+  });
+
+  queryClient.setQueryData(['presence', 'attending-users'], (current = []) => {
+    const items = Array.isArray(current) ? current : [];
+    const nextItems = items.filter((item) => getPresenceUserId(item) !== userId);
+    const status = String(presence.status || '').trim().toLowerCase();
+    if (status === 'offline') return nextItems;
+    return [{ ...presence, user_id: userId, id: presence.id || userId }, ...nextItems];
+  });
+};
+
 export function useChatEvents({ selectedConversationId = '' } = {}) {
   const queryClient = useQueryClient();
   const normalizedSelectedConversationId = String(selectedConversationId || '').trim();
@@ -50,9 +93,7 @@ export function useChatEvents({ selectedConversationId = '' } = {}) {
       return undefined;
     }
 
-    const eventSource = new window.EventSource(buildChatSseUrl({
-      conversationIds: normalizedSelectedConversationId ? [normalizedSelectedConversationId] : [],
-    }), { withCredentials: true });
+    const eventSource = new window.EventSource(buildChatSseUrl(), { withCredentials: true });
     useChatStore.getState().setSseStatus('connecting');
 
     const handleOpen = () => useChatStore.getState().setSseStatus('connected');
@@ -73,7 +114,7 @@ export function useChatEvents({ selectedConversationId = '' } = {}) {
             const senderType = String(message.sender_type || message.senderType || message.direction || '').trim().toLowerCase();
             const isInboundMessage = senderType === 'client' || senderType === 'customer' || senderType === 'inbound';
             if (isSelectedConversation && isInboundMessage) {
-              void markChatConversationRead(conversationId, { lastReadMessageId: message.id || null }).catch(() => {});
+              scheduleSelectedConversationRead(conversationId, message.id || message.message_id || null);
             }
             const activityPatch = payload.summary || {
               last_message: message.body || message.content || '',
@@ -111,7 +152,7 @@ export function useChatEvents({ selectedConversationId = '' } = {}) {
         }
 
         if (eventName === 'presence_updated') {
-          void queryClient.invalidateQueries({ queryKey: ['presence'] });
+          updatePresenceCaches(queryClient, payload);
           dispatchLocalRealtimeEvent('presence:updated', payload);
           return;
         }
@@ -155,5 +196,5 @@ export function useChatEvents({ selectedConversationId = '' } = {}) {
       eventSource.close();
       useChatStore.getState().setSseStatus('closed');
     };
-  }, [normalizedSelectedConversationId, queryClient]);
+  }, [queryClient]);
 }

@@ -120,22 +120,15 @@ export default function SiteNotificationBridge() {
   useEffect(
     () =>
       subscribeToLocalEvents((event) => {
-        if (event.type === 'conversation:message-upserted' || event.type === 'conversation:assignment-updated') {
-          scheduleQueryInvalidation(queryClient, { queryKey: ['conversations', 'attendance'] });
-          scheduleQueryInvalidation(queryClient, { queryKey: ['presence', 'attending-users'] });
-        }
-
         if (event.type === 'conversation:preference-updated') {
           scheduleQueryInvalidation(queryClient, { queryKey: ['conversation-preferences'] });
         }
 
         if (
-          event.type === 'presence:started' ||
-          event.type === 'presence:stopped' ||
           event.type === 'presence:distribution-paused' ||
           event.type === 'presence:distribution-resumed'
         ) {
-          scheduleQueryInvalidation(queryClient, { queryKey: ['presence'] });
+          scheduleQueryInvalidation(queryClient, { queryKey: ['presence', 'status'] });
         }
       }),
     [queryClient],

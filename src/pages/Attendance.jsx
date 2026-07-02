@@ -29,6 +29,7 @@ import {
   subscribeToCachedDrafts,
   writeCachedConversations,
 } from '@/lib/inbox-cache';
+import { createPresenceLeadership } from '@/lib/presence-leadership';
 import { enrichConversationsWithLabels, useLabelCatalog } from '@/lib/labels';
 import {
   fetchActiveAttendanceUsers,
@@ -139,6 +140,7 @@ export default function Attendance() {
   const serviceFilter = useChatStore((state) => state.filters.service);
   const labelFilter = useChatStore((state) => state.filters.label);
   const sidePanel = useChatStore((state) => state.sidePanel);
+  const sseStatus = useChatStore((state) => state.sseStatus);
   const setFilter = useChatStore((state) => state.setFilter);
   const setSidePanel = useChatStore((state) => state.setSidePanel);
   const setSearchTerm = (value) => setFilter('searchTerm', value);
@@ -195,8 +197,8 @@ export default function Attendance() {
   const { data: services = [] } = useQuery({
     queryKey: ['services', 'attendance'],
     queryFn: fetchServices,
-    staleTime: SERVICES_REFRESH_INTERVAL_MS,
-    refetchInterval: SERVICES_REFRESH_INTERVAL_MS,
+    staleTime: Math.max(300000, SERVICES_REFRESH_INTERVAL_MS),
+    refetchInterval: false,
     refetchOnMount: false,
     refetchOnWindowFocus: false,
   });
@@ -212,7 +214,8 @@ export default function Attendance() {
     queryKey: ['presence', 'attending-users'],
     queryFn: fetchActiveAttendanceUsers,
     staleTime: 10000,
-    refetchInterval: PRESENCE_REFRESH_INTERVAL_MS,
+    refetchInterval: sseStatus === 'connected' ? false : PRESENCE_REFRESH_INTERVAL_MS,
+    refetchOnWindowFocus: sseStatus !== 'connected',
   });
 
   const { data: presenceStatus } = useQuery({
@@ -220,6 +223,7 @@ export default function Attendance() {
     queryFn: fetchAttendancePresenceStatus,
     staleTime: 10000,
     enabled: Boolean(effectiveUser?.id),
+    refetchOnWindowFocus: sseStatus !== 'connected',
   });
 
   const { data: chatbotRuntimeState } = useQuery({
@@ -320,25 +324,47 @@ export default function Attendance() {
     }
 
     let cancelled = false;
-    void startAttendancePresence()
-      .then(() => {
-        if (cancelled) return;
-        scheduleQueryInvalidation(queryClient, { queryKey: ['presence'] });
-        scheduleQueryInvalidation(queryClient, { queryKey: ['conversations', 'attendance'] });
-      })
-      .catch(() => {
-        // A tela continua carregando mesmo se a presenca falhar; as queries mostram o estado real.
+    const presenceLeadership = createPresenceLeadership(effectiveUser.id);
+    const applyPresenceResult = (result) => {
+      const presence = result?.presence;
+      if (!presence) return;
+      queryClient.setQueryData(['presence', 'status', effectiveUser.id], (current = {}) => ({
+        ...(current && typeof current === 'object' ? current : {}),
+        ok: true,
+        presence,
+        distributionPause: result?.distributionPause || current?.distributionPause || null,
+      }));
+      queryClient.setQueryData(['presence', 'attending-users'], (current = []) => {
+        const items = Array.isArray(current) ? current : [];
+        const presenceId = String(presence.user_id || presence.id || '').trim();
+        if (!presenceId) return items;
+        const nextItems = items.filter((item) => String(item?.user_id || item?.id || '').trim() !== presenceId);
+        return presence.status === 'offline' ? nextItems : [presence, ...nextItems];
       });
+    };
+
+    const startPresenceIfLeader = () => {
+      if (!presenceLeadership.claim()) return;
+      void startAttendancePresence()
+        .then((result) => {
+          if (cancelled) return;
+          applyPresenceResult(result);
+        })
+        .catch(() => {
+          // A tela continua carregando mesmo se a presenca falhar; as queries mostram o estado real.
+        });
+    };
+
+    startPresenceIfLeader();
 
     const presenceHeartbeatId = window.setInterval(() => {
-      void heartbeatAttendancePresence().catch(() => {});
+      if (!presenceLeadership.claim()) return;
+      void heartbeatAttendancePresence()
+        .then((result) => {
+          if (!cancelled) applyPresenceResult(result);
+        })
+        .catch(() => {});
     }, 30_000);
-
-    const refreshAttendanceConversations = () => {
-      scheduleQueryInvalidation(queryClient, { queryKey: ['conversations', 'attendance'] });
-      scheduleQueryInvalidation(queryClient, { queryKey: ['presence', 'attending-users'] });
-      scheduleQueryInvalidation(queryClient, { queryKey: ['presence', 'status'] });
-    };
 
     const unsubscribe = subscribeToLocalEvents((event) => {
       if (event.type === 'conversation:preference-updated') {
@@ -356,15 +382,9 @@ export default function Attendance() {
           });
 
           void queryClient.invalidateQueries({ queryKey: ['conversation-preferences'] });
-          refreshAttendanceConversations();
         } catch {
           // Evento invalido nao deve derrubar a tela de atendimento.
         }
-        return;
-      }
-
-      if (event.type === 'conversation:assignment-updated') {
-        refreshAttendanceConversations();
         return;
       }
 
@@ -374,21 +394,23 @@ export default function Attendance() {
         event.type === 'conversation:message-reaction-updated'
       ) {
         dispatchLocalRealtimeEvent(event.type, event.payload || {});
-        refreshAttendanceConversations();
         return;
       }
 
       if (event.type === 'presence:distribution-paused' || event.type === 'presence:distribution-resumed') {
-        scheduleQueryInvalidation(queryClient, { queryKey: ['presence'] });
+        scheduleQueryInvalidation(queryClient, { queryKey: ['presence', 'status', effectiveUser.id] });
       }
     });
 
     return () => {
       cancelled = true;
       window.clearInterval(presenceHeartbeatId);
+      presenceLeadership.release();
       unsubscribe();
     };
   }, [effectiveUser?.id, queryClient]);
+
+  // Eventos de conversa/presenca atualizam cache via SSE; refetch amplo fica fora do caminho quente.
 
   const shouldUseCachedConversations =
     networkConversations.length === 0 &&

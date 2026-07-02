@@ -41,6 +41,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { saveConversationPreference } from '@/lib/conversation-preferences';
 import { assignConversationToUser, requeueConversationForService } from '@/lib/conversation-assignment-api';
+import { updateConversationCaches } from '@/features/chat/cache-updaters';
 import { resolveConversationAssignmentStatus } from '@/lib/conversation-assignment-status';
 import { conversationMatchesQueueServiceFilter } from '@/lib/attendance-buckets';
 import { buildLabelSummary, conversationHasLabel, toggleConversationCustomLabel } from '@/lib/labels';
@@ -425,14 +426,7 @@ export default function ConversationList({
         matchingServiceIds: conversation.matching_service_ids,
       });
       const assignedConversation = result?.conversation || {};
-      queryClient.setQueryData(['conversations', 'attendance'], (current = []) =>
-        (Array.isArray(current) ? current : []).map((item) =>
-          String(item?.id || '') === String(conversation.id || '')
-            ? { ...item, ...assignedConversation }
-            : item
-        )
-      );
-      await queryClient.invalidateQueries({ queryKey: ['conversations', 'attendance'] });
+      updateConversationCaches(queryClient, conversation.id, assignedConversation);
       toast.success(`Conversa redirecionada para ${assignedConversation.assigned_agent_name || user.full_name || 'operador'}.`);
     } catch (error) {
       toast.error(error?.message || 'Nao foi possivel redirecionar a conversa.');
@@ -446,15 +440,7 @@ export default function ConversationList({
         matchingServiceIds: conversation.matching_service_ids,
       });
       const queuedConversation = result?.conversation || {};
-      queryClient.setQueryData(['conversations', 'attendance'], (current = []) =>
-        (Array.isArray(current) ? current : []).map((item) =>
-          String(item?.id || '') === String(conversation.id || '')
-            ? { ...item, ...queuedConversation }
-            : item
-        )
-      );
-      await queryClient.invalidateQueries({ queryKey: ['conversations', 'attendance'] });
-      await queryClient.invalidateQueries({ queryKey: ['presence', 'attending-users'] });
+      updateConversationCaches(queryClient, conversation.id, queuedConversation);
       toast.success('Conversa enviada para a fila do serviço.');
     } catch (error) {
       toast.error(error?.message || 'Nao foi possivel enviar a conversa para a fila.');
@@ -472,15 +458,7 @@ export default function ConversationList({
         targetServiceId,
       });
       const queuedConversation = result?.conversation || {};
-      queryClient.setQueryData(['conversations', 'attendance'], (current = []) =>
-        (Array.isArray(current) ? current : []).map((item) =>
-          String(item?.id || '') === String(conversation.id || '')
-            ? { ...item, ...queuedConversation }
-            : item
-        )
-      );
-      await queryClient.invalidateQueries({ queryKey: ['conversations', 'attendance'] });
-      await queryClient.invalidateQueries({ queryKey: ['presence', 'attending-users'] });
+      updateConversationCaches(queryClient, conversation.id, queuedConversation);
       toast.success(`Conversa transferida para ${service.name || 'o serviço selecionado'}.`);
     } catch (error) {
       toast.error(error?.message || 'Nao foi possivel transferir a conversa para o servico.');

@@ -79,7 +79,7 @@ import { ENABLE_CHAT_VIRTUALIZATION, ENABLE_NEW_CHAT_DATA_LAYER, MESSAGE_PAGE_LI
 import { useChatStore } from '@/features/chat/store/useChatStore';
 import { flattenMessagePages, useMessages } from '@/features/chat/hooks/useMessages';
 import { isAdminLikeUser } from '@/lib/navigation-permissions';
-import { markConversationReadCaches } from '@/features/chat/cache-updaters';
+import { markConversationReadCaches, updateConversationCaches } from '@/features/chat/cache-updaters';
 import { resolveConversationReplyRouteSelector } from '@/lib/conversation-channel';
 
 const INITIAL_MESSAGE_PAGE_SIZE = MESSAGE_PAGE_LIMIT;
@@ -2666,8 +2666,9 @@ export default function ChatWindow({
         matchingServiceIds: conversation.matching_service_ids,
       });
 
-      if (result?.conversation && onUpdateConversation) {
-        onUpdateConversation({
+      if (result?.conversation) {
+        updateConversationCaches(queryClient, conversation.id, result.conversation);
+        onUpdateConversation?.({
           ...conversation,
           ...result.conversation,
         });
@@ -2676,7 +2677,6 @@ export default function ChatWindow({
       setTransferDialogOpen(false);
       setTransferUserId('');
       setTransferServiceId('');
-      await queryClient.invalidateQueries({ queryKey: ['conversations', 'attendance'] });
 
       if (!isCurrentUserAdmin) {
         onClearConversation?.();
@@ -2703,8 +2703,9 @@ export default function ChatWindow({
         matchingServiceIds: conversation.matching_service_ids,
       });
 
-      if (result?.conversation && onUpdateConversation) {
-        onUpdateConversation({
+      if (result?.conversation) {
+        updateConversationCaches(queryClient, conversation.id, result.conversation);
+        onUpdateConversation?.({
           ...conversation,
           ...result.conversation,
         });
@@ -2713,8 +2714,6 @@ export default function ChatWindow({
       setTransferDialogOpen(false);
       setTransferUserId('');
       setTransferServiceId('');
-      await queryClient.invalidateQueries({ queryKey: ['conversations', 'attendance'] });
-      await queryClient.invalidateQueries({ queryKey: ['presence', 'attending-users'] });
 
       if (!isCurrentUserAdmin) {
         onClearConversation?.();
@@ -2742,8 +2741,9 @@ export default function ChatWindow({
         targetServiceId: transferServiceId,
       });
 
-      if (result?.conversation && onUpdateConversation) {
-        onUpdateConversation({
+      if (result?.conversation) {
+        updateConversationCaches(queryClient, conversation.id, result.conversation);
+        onUpdateConversation?.({
           ...conversation,
           ...result.conversation,
         });
@@ -2753,8 +2753,6 @@ export default function ChatWindow({
       setTransferDialogOpen(false);
       setTransferUserId('');
       setTransferServiceId('');
-      await queryClient.invalidateQueries({ queryKey: ['conversations', 'attendance'] });
-      await queryClient.invalidateQueries({ queryKey: ['presence', 'attending-users'] });
 
       if (!isCurrentUserAdmin) {
         onClearConversation?.();
