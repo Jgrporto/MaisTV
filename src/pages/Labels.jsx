@@ -23,7 +23,7 @@ import PageShell from '@/components/layout/PageShell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/lib/AuthContext';
-import { fetchPersistedCustomers } from '@/lib/customer-sync-api';
+import { fetchAllPersistedCustomers } from '@/lib/customer-sync-api';
 import { buildCustomerRows } from '@/lib/customer-base';
 import {
   buildLabelSummary,
@@ -70,7 +70,7 @@ export default function Labels() {
 
   const { data: customersResponse } = useQuery({
     queryKey: ['persisted-customers'],
-    queryFn: fetchPersistedCustomers,
+    queryFn: fetchAllPersistedCustomers,
     staleTime: CUSTOMER_CACHE_REFRESH_INTERVAL_MS,
     refetchInterval: CUSTOMER_CACHE_REFRESH_INTERVAL_MS,
     refetchOnMount: 'always',

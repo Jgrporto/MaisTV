@@ -318,7 +318,7 @@ export default function ConversationList({
       return;
     }
 
-    queryClient.setQueryData(['conversation-preferences'], (current = []) =>
+    queryClient.setQueriesData({ queryKey: ['conversation-preferences'] }, (current = []) =>
       upsertPreferenceInCache(current, conversation.id, {
         is_pinned: nextPinned,
         pinned_at: nextPinned ? new Date().toISOString() : '',
@@ -343,7 +343,7 @@ export default function ConversationList({
   const handleToggleManualUnread = async (conversation) => {
     const nextManualUnread = !conversation.manual_unread;
 
-    queryClient.setQueryData(['conversation-preferences'], (current = []) =>
+    queryClient.setQueriesData({ queryKey: ['conversation-preferences'] }, (current = []) =>
       upsertPreferenceInCache(current, conversation.id, {
         manual_unread: nextManualUnread,
         manual_unread_at: nextManualUnread ? new Date().toISOString() : '',

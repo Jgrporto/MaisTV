@@ -13,8 +13,7 @@ import {
   normalizeConversationPreference,
   saveConversationPreference,
 } from '@/lib/conversation-preferences';
-import { fetchAllPersistedCustomers } from '@/lib/customer-sync-api';
-import { buildCustomerRows } from '@/lib/customer-base';
+import { fetchPersistedCustomerDetail } from '@/lib/customer-sync-api';
 import { subscribeToLocalEvents } from '@/lib/local-events';
 import { dispatchLocalRealtimeEvent } from '@/lib/realtime-events';
 import { scheduleQueryInvalidation } from '@/lib/query-invalidation';
@@ -45,7 +44,6 @@ import {
   CHATBOT_RUNTIME_REFRESH_INTERVAL_MS,
   CONVERSATION_SUMMARY_LIMIT,
   ENABLE_NEW_CHAT_DATA_LAYER,
-  CUSTOMER_CACHE_REFRESH_INTERVAL_MS,
   PRESENCE_REFRESH_INTERVAL_MS,
   SERVICES_REFRESH_INTERVAL_MS,
 } from '@/lib/performance-config';
@@ -180,17 +178,58 @@ export default function Attendance() {
 
   useChatEvents({ selectedConversationId: selectedConversation?.id });
 
-  const { data: customersResponse } = useQuery({
-    queryKey: ['persisted-customers', 'all'],
-    queryFn: fetchAllPersistedCustomers,
-    staleTime: CUSTOMER_CACHE_REFRESH_INTERVAL_MS,
-    refetchInterval: CUSTOMER_CACHE_REFRESH_INTERVAL_MS,
-    refetchOnMount: 'always',
+  const selectedCustomerId = String(
+    selectedConversation?.customer_summary?.id || selectedConversation?.customer?.id || '',
+  ).trim();
+  const { data: selectedCustomerDetail } = useQuery({
+    queryKey: ['customer-detail', selectedCustomerId],
+    queryFn: () => fetchPersistedCustomerDetail(selectedCustomerId),
+    enabled: Boolean(selectedCustomerId),
+    staleTime: 60_000,
   });
 
+  useEffect(() => {
+    if (!selectedCustomerDetail || !selectedCustomerId) return;
+    setSelectedConversation((currentConversation) => {
+      const currentCustomerId = String(
+        currentConversation?.customer_summary?.id || currentConversation?.customer?.id || '',
+      ).trim();
+      if (currentCustomerId !== selectedCustomerId) return currentConversation;
+      const currentPassword = String(currentConversation?.customer?.password || currentConversation?.customer?.senha || '');
+      const nextPassword = String(selectedCustomerDetail.password || selectedCustomerDetail.senha || '');
+      if (currentPassword === nextPassword && currentConversation?.customer?.detailLoaded) return currentConversation;
+      return {
+        ...currentConversation,
+        customer: {
+          ...(currentConversation?.customer || {}),
+          id: selectedCustomerDetail.id || selectedCustomerId,
+          name: selectedCustomerDetail.display_name || currentConversation?.customer?.name || '',
+          username: selectedCustomerDetail.username || currentConversation?.customer?.username || '',
+          password: nextPassword,
+          senha: nextPassword,
+          plan: selectedCustomerDetail.package || currentConversation?.customer?.plan || '',
+          dueDate: selectedCustomerDetail.expires_at || currentConversation?.customer?.dueDate || '',
+          detailLoaded: true,
+        },
+      };
+    });
+  }, [
+    selectedConversation?.customer?.detailLoaded,
+    selectedConversation?.customer?.password,
+    selectedConversation?.customer?.senha,
+    selectedCustomerDetail,
+    selectedCustomerId,
+    setSelectedConversation,
+  ]);
+
+  const visibleConversationIds = useMemo(
+    () => networkConversations.map((conversation) => String(conversation?.id || '').trim()).filter(Boolean),
+    [networkConversations],
+  );
   const { data: conversationPreferences = [] } = useQuery({
-    queryKey: ['conversation-preferences'],
-    queryFn: fetchConversationPreferences,
+    queryKey: ['conversation-preferences', visibleConversationIds],
+    queryFn: () => fetchConversationPreferences(visibleConversationIds),
+    enabled: visibleConversationIds.length > 0,
     staleTime: 5000,
   });
 
@@ -373,7 +412,7 @@ export default function Attendance() {
           const preference = normalizeConversationPreference(payload?.preference || {});
           if (!preference.conversation_id) return;
 
-          queryClient.setQueryData(['conversation-preferences'], (current = []) => {
+          queryClient.setQueriesData({ queryKey: ['conversation-preferences'] }, (current = []) => {
             const items = Array.isArray(current) ? current : [];
             const itemsWithoutDuplicates = items.filter(
               (item) => String(item?.conversation_id || item?.conversationId || item?.id || '') !== preference.conversation_id,
@@ -418,11 +457,6 @@ export default function Attendance() {
     (!isFetched || isError);
   const baseConversations =
     networkConversations.length > 0 ? networkConversations : shouldUseCachedConversations ? cachedConversations : [];
-  const persistedCustomers = Array.isArray(customersResponse?.rows) ? customersResponse.rows : [];
-  const customerRows = useMemo(
-    () => buildCustomerRows(persistedCustomers, baseConversations),
-    [persistedCustomers, baseConversations]
-  );
   const conversationPreferencesMap = useMemo(
     () =>
       new Map(
@@ -468,7 +502,7 @@ export default function Attendance() {
 
   const conversations = useMemo(
     () => {
-      const enrichedConversations = enrichConversationsWithLabels(baseConversations, customerRows, {
+      const enrichedConversations = enrichConversationsWithLabels(baseConversations, [], {
         customLabels,
         assignments,
         stageAssignments,
@@ -484,11 +518,11 @@ export default function Attendance() {
 
           return {
             ...conversation,
-            is_pinned: Boolean(preference?.is_pinned),
+            is_pinned: Boolean(preference?.is_pinned ?? conversation.is_pinned),
             pinned_at: preference?.pinned_at || '',
             pinned_by_id: preference?.pinned_by_id || '',
             pinned_by_name: preference?.pinned_by_name || '',
-            manual_unread: Boolean(preference?.manual_unread),
+            manual_unread: Boolean(preference?.manual_unread ?? conversation.manual_unread),
             manual_unread_at: preference?.manual_unread_at || '',
             manual_unread_by_id: preference?.manual_unread_by_id || '',
             manual_unread_by_name: preference?.manual_unread_by_name || '',
@@ -502,7 +536,7 @@ export default function Attendance() {
             draft_preview: draftEntry?.value || '',
             draft_updated_at: draftEntry?.updatedAt || '',
             draft_sort_at: draftEntry?.sortAt || '',
-            effective_unread: unreadCount > 0 || Boolean(preference?.manual_unread),
+            effective_unread: unreadCount > 0 || Boolean(preference?.manual_unread ?? conversation.manual_unread),
             sort_index: index,
           };
         }),
@@ -580,7 +614,6 @@ export default function Attendance() {
       chatbotRuntimeContext,
       conversationPreferencesMap,
       customLabels,
-      customerRows,
       draftEntriesMap,
       services,
       stageAssignments,
@@ -673,7 +706,7 @@ export default function Attendance() {
       return;
     }
 
-    queryClient.setQueryData(['conversation-preferences'], (current = []) =>
+    queryClient.setQueriesData({ queryKey: ['conversation-preferences'] }, (current = []) =>
       current.map((preference) =>
         String(preference?.conversation_id) !== String(conv.id)
           ? preference

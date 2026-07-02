@@ -72,9 +72,25 @@ const requestConversationPreferenceJson = async (path = '', options = {}) => {
   return data;
 };
 
-export const fetchConversationPreferences = async () => {
-  const data = await requestConversationPreferenceJson('?sort=-updated_date', { method: 'GET' });
-  return dedupeConversationPreferences(data);
+export const fetchConversationPreferences = async (conversationIds = []) => {
+  const ids = Array.from(new Set((Array.isArray(conversationIds) ? conversationIds : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)));
+  if (!ids.length) return [];
+  const batches = [];
+  for (let index = 0; index < ids.length; index += 100) batches.push(ids.slice(index, index + 100));
+  const results = await Promise.all(batches.map(async (batch) => {
+    const response = await requestLocalApi(`/conversation-preferences?ids=${encodeURIComponent(batch.join(','))}`, { method: 'GET' });
+    const data = await parseJsonResponse(response);
+    if (!response.ok) {
+      throw Object.assign(
+        new Error(data?.error || 'Falha ao carregar as preferencias das conversas.'),
+        { status: response.status },
+      );
+    }
+    return Array.isArray(data) ? data : [];
+  }));
+  return dedupeConversationPreferences(results.flat());
 };
 
 export const saveConversationPreference = async (conversationId, patch = {}) => {

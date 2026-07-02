@@ -20,7 +20,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ROUTINE_TYPES, formatDateTime, getTemplateLanguage, getTemplateName, normalizeText } from '@/components/routines/utils';
-import { fetchPersistedCustomers } from '@/lib/customer-sync-api';
+import { fetchAllPersistedCustomers } from '@/lib/customer-sync-api';
 import { fetchLocalHsms } from '@/lib/hsm-api';
 import { SYSTEM_LABELS, useLabelCatalog } from '@/lib/labels';
 import { listQuickReplies } from '@/lib/quick-replies';
@@ -381,7 +381,7 @@ export default function Rotinas() {
   });
   const customersQuery = useQuery({
     queryKey: ['customers', 'persisted', 'routines'],
-    queryFn: fetchPersistedCustomers,
+    queryFn: fetchAllPersistedCustomers,
     staleTime: 60000,
     refetchOnWindowFocus: false,
   });

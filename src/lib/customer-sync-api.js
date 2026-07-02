@@ -23,6 +23,12 @@ export const fetchPersistedCustomers = async () => {
   return await requestLocalApiJson('/customers', { method: 'GET' });
 };
 
+export const fetchPersistedCustomerDetail = async (customerId) => {
+  const safeCustomerId = String(customerId || '').trim();
+  if (!safeCustomerId) return null;
+  return await requestLocalApiJson(`/customers/${encodeURIComponent(safeCustomerId)}`, { method: 'GET' });
+};
+
 export const fetchAllPersistedCustomers = async ({ limit = 200 } = {}) => {
   const safeLimit = Math.min(200, Math.max(1, Number.parseInt(String(limit), 10) || 200));
   const rows = [];

@@ -2590,7 +2590,7 @@ export default function ChatWindow({
         sourceConversationIds: conversation.source_conversation_ids,
       });
 
-      queryClient.setQueryData(['conversation-preferences'], (current = []) => {
+      queryClient.setQueriesData({ queryKey: ['conversation-preferences'] }, (current = []) => {
         const nextItems = Array.isArray(current) ? [...current] : [];
         const currentIndex = nextItems.findIndex(
           (item) => String(item?.conversation_id || item?.id || '') === String(conversation.id)

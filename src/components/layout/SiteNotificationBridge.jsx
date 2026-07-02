@@ -6,26 +6,23 @@ import {
   startCustomerBrowserSync,
   useCustomerBrowserSync,
 } from '@/lib/customer-browser-sync';
-import { buildCustomerRows } from '@/lib/customer-base';
 import { fetchChatbotRuntimeState, processChatbotConversation } from '@/lib/chatbot-flows-api';
 import {
   buildConversationMessageKey,
   getMatchingActiveFlow,
   hasNewClientMessage,
 } from '@/lib/chatbot-runtime';
-import { fetchCustomerSyncState, fetchNewbrBrowserAuthConfig, fetchPersistedCustomers } from '@/lib/customer-sync-api';
+import { fetchCustomerSyncState, fetchNewbrBrowserAuthConfig } from '@/lib/customer-sync-api';
 import { enrichConversationsWithLabels, useLabelCatalog } from '@/lib/labels';
 import { subscribeToLocalEvents } from '@/lib/local-events';
 import {
   BACKGROUND_REFRESH_INTERVAL_MS,
   CHATBOT_RUNTIME_REFRESH_INTERVAL_MS,
-  CONVERSATION_REFRESH_INTERVAL_MS,
   CONVERSATION_SUMMARY_LIMIT,
-  CUSTOMER_CACHE_REFRESH_INTERVAL_MS,
   NOTIFICATION_SETTINGS_REFRESH_INTERVAL_MS,
 } from '@/lib/performance-config';
 import { scheduleQueryInvalidation } from '@/lib/query-invalidation';
-import { fetchWhatsappConversations } from '@/lib/whatsapp-api';
+import { useConversations } from '@/features/chat/hooks/useConversations';
 import { useAuth } from '@/lib/AuthContext';
 import {
   DEFAULT_NOTIFICATION_SETTINGS,
@@ -78,21 +75,14 @@ export default function SiteNotificationBridge() {
   const chatbotActiveCountRef = useRef(0);
   const chatbotInvalidationTimerRef = useRef(null);
 
-  const { data: rawConversations = [] } = useQuery({
-    queryKey: ['conversations', 'attendance', 'summary', CONVERSATION_SUMMARY_LIMIT],
-    queryFn: () => fetchWhatsappConversations({ summary: true, limit: CONVERSATION_SUMMARY_LIMIT }),
-    refetchInterval: notificationSettings.alertNewConversations ? CONVERSATION_REFRESH_INTERVAL_MS : false,
-    staleTime: 10000,
+  const conversationsQuery = useConversations({
+    limit: CONVERSATION_SUMMARY_LIMIT,
     enabled: notificationSettings.alertNewConversations,
   });
-
-  const { data: customersResponse } = useQuery({
-    queryKey: ['persisted-customers'],
-    queryFn: fetchPersistedCustomers,
-    staleTime: CUSTOMER_CACHE_REFRESH_INTERVAL_MS,
-    refetchInterval: notificationSettings.alertNewConversations ? CUSTOMER_CACHE_REFRESH_INTERVAL_MS : false,
-    enabled: notificationSettings.alertNewConversations,
-  });
+  const rawConversations = useMemo(
+    () => (conversationsQuery.data?.pages || []).flatMap((page) => page?.items || []),
+    [conversationsQuery.data],
+  );
 
   const { data: customerSyncState } = useQuery({
     queryKey: ['customer-sync-state'],
@@ -148,18 +138,13 @@ export default function SiteNotificationBridge() {
     setNotificationSettings(readNotificationSettings(notificationSettingsData));
   }, [notificationSettingsData]);
 
-  const persistedCustomers = Array.isArray(customersResponse?.rows) ? customersResponse.rows : [];
-  const customerRows = useMemo(
-    () => buildCustomerRows(persistedCustomers, rawConversations),
-    [persistedCustomers, rawConversations]
-  );
   const conversations = useMemo(
-    () => enrichConversationsWithLabels(rawConversations, customerRows, {
+    () => enrichConversationsWithLabels(rawConversations, [], {
       customLabels,
       assignments,
       stageAssignments,
     }),
-    [assignments, customLabels, customerRows, rawConversations, stageAssignments],
+    [assignments, customLabels, rawConversations, stageAssignments],
   );
 
   useEffect(() => {

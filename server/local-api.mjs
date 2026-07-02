@@ -59,6 +59,8 @@ import {
 } from './modules/dispatch/routine-dispatch-queue.mjs';
 import { attachSlowRouteLogger } from './middlewares/slow-route-logger.mjs';
 import { handleCustomerReadRoutes } from './routes/customers.routes.mjs';
+import { handleConversationPreferenceReadRoutes } from './routes/conversation-preferences.routes.mjs';
+import { enrichConversationsWithCustomerSummaries } from './services/customer-summary.service.mjs';
 import { handleDashboardRoutes } from './routes/dashboard.routes.mjs';
 import { createLogoutAssignmentRecoveryService } from './services/logout-assignment-recovery.service.mjs';
 import { syncCustomerProfilesFromRows } from './services/customer-profile.service.mjs';
@@ -5414,6 +5416,14 @@ const getChatArchitectureApp = () => {
       app.disable('x-powered-by');
       await registerChatArchitecture(app, {
         resolveSession: resolveChatArchitectureSession,
+        customerSummaryProvider: async (conversations) => {
+          try {
+            return enrichConversationsWithCustomerSummaries(conversations, await readStore());
+          } catch (error) {
+            console.warn(`[local-api] customer_summary_unavailable error=${error?.message || error}`);
+            return conversations.map((conversation) => ({ ...conversation, customer_summary: null }));
+          }
+        },
         includeSse: false,
         includeBullBoard: String(process.env.BULL_BOARD_ENABLED || 'true').toLowerCase() !== 'false',
       });
@@ -10420,8 +10430,15 @@ const server = http.createServer(async (req, res) => {
         readStore,
         sendJson,
         sendJsonText,
+        warnLargeResponse: ({ method, path: requestPath, bytes }) => console.warn(
+          `[local-api] large_json_response method=${method} path=${requestPath} bytes=${bytes}`,
+        ),
       })
     ) {
+      return;
+    }
+
+    if (await handleConversationPreferenceReadRoutes(req, res, url, { readStore, sendJson })) {
       return;
     }
 

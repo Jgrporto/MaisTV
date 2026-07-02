@@ -56,7 +56,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/lib/AuthContext';
 import { buildCustomerRows, isOpenConversation } from '@/lib/customer-base';
-import { fetchPersistedCustomers } from '@/lib/customer-sync-api';
+import { fetchAllPersistedCustomers } from '@/lib/customer-sync-api';
 import { fetchLocalHsms, uploadHsmMedia } from '@/lib/hsm-api';
 import { enrichConversationsWithLabels, getLabelBadgeStyle, SYSTEM_LABELS, useLabelCatalog } from '@/lib/labels';
 import { CONVERSATION_BACKGROUND_SUMMARY_LIMIT, CONVERSATION_REFRESH_INTERVAL_MS } from '@/lib/performance-config';
@@ -825,7 +825,7 @@ export default function EnvioEmMassa() {
 
   const { data: customersResponse, isLoading: isLoadingCustomers } = useQuery({
     queryKey: ['persisted-customers'],
-    queryFn: fetchPersistedCustomers,
+    queryFn: fetchAllPersistedCustomers,
     staleTime: 60000,
     refetchInterval: 60000,
   });

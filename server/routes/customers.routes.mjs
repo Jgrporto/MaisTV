@@ -1,4 +1,5 @@
 import { getOptionalPaginationFromSearchParams, paginateItems } from '../middlewares/pagination.mjs';
+import { shapeCustomerDetail, shapeCustomerListItem } from '../services/customer-summary.service.mjs';
 
 let customersResponseCache = null;
 
@@ -19,12 +20,15 @@ const buildCustomersResponseJson = (store = {}, pagination = null, getPublicCust
     limit: paginatedRows.paginated ? paginatedRows.limit : null,
   });
 
-  if (customersResponseCache?.key === cacheKey) {
-    return customersResponseCache.json;
+  if (customersResponseCache?.customers !== allRows) {
+    customersResponseCache = { customers: allRows, responses: new Map() };
+  }
+  if (customersResponseCache.responses.has(cacheKey)) {
+    return customersResponseCache.responses.get(cacheKey);
   }
 
   const json = JSON.stringify({
-    rows: paginatedRows.items,
+    rows: paginatedRows.items.map(shapeCustomerListItem),
     sync,
     ...(paginatedRows.paginated
       ? {
@@ -35,7 +39,10 @@ const buildCustomersResponseJson = (store = {}, pagination = null, getPublicCust
         }
       : {}),
   });
-  customersResponseCache = { key: cacheKey, json };
+  customersResponseCache.responses.set(cacheKey, json);
+  while (customersResponseCache.responses.size > 50) {
+    customersResponseCache.responses.delete(customersResponseCache.responses.keys().next().value);
+  }
   return json;
 };
 
@@ -47,6 +54,7 @@ export const handleCustomerReadRoutes = async (req, res, url, deps = {}) => {
     readStore,
     sendJson,
     sendJsonText,
+    warnLargeResponse,
   } = deps;
 
   if (
@@ -60,13 +68,37 @@ export const handleCustomerReadRoutes = async (req, res, url, deps = {}) => {
 
   if (req.method === 'GET' && url.pathname === '/api/local/customers') {
     const store = await readStore();
-    sendJsonText(res, 200, buildCustomersResponseJson(
+    const pagination = getOptionalPaginationFromSearchParams(url.searchParams, { defaultLimit: 50, maxLimit: 200 }) || {
+      page: 1,
+      limit: 50,
+      offset: 0,
+    };
+    const json = buildCustomersResponseJson(
       store,
-      getOptionalPaginationFromSearchParams(url.searchParams, { defaultLimit: 50, maxLimit: 200 }),
+      pagination,
       getPublicCustomerSyncState,
-    ), {
+    );
+    const bytes = Buffer.byteLength(json, 'utf8');
+    if (bytes > 1024 * 1024 && typeof warnLargeResponse === 'function') {
+      warnLargeResponse({ method: req.method, path: url.pathname, bytes });
+    }
+    sendJsonText(res, 200, json, {
       'Cache-Control': 'private, max-age=30',
     });
+    return true;
+  }
+
+  const customerDetailMatch = url.pathname.match(/^\/api\/local\/customers\/([^/]+)$/);
+  if (req.method === 'GET' && customerDetailMatch && !['sync', 'logs'].includes(customerDetailMatch[1])) {
+    const store = await readStore();
+    const customerId = decodeURIComponent(customerDetailMatch[1] || '');
+    const customer = (Array.isArray(store.customers) ? store.customers : [])
+      .find((item) => String(item?.id || '') === customerId);
+    if (!customer) {
+      sendJson(res, 404, { error: 'customer_not_found' });
+      return true;
+    }
+    sendJson(res, 200, shapeCustomerDetail(customer), { 'Cache-Control': 'private, no-store' });
     return true;
   }
 

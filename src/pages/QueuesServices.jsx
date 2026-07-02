@@ -20,7 +20,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { fetchActiveAttendanceUsers } from '@/lib/presence-api';
-import { fetchPersistedCustomers } from '@/lib/customer-sync-api';
+import { fetchAllPersistedCustomers } from '@/lib/customer-sync-api';
 import { buildCustomerRows } from '@/lib/customer-base';
 import { enrichConversationsWithLabels, useLabelCatalog } from '@/lib/labels';
 import { subscribeToLocalEvents } from '@/lib/local-events';
@@ -261,7 +261,7 @@ export default function QueuesServices() {
 
   const { data: customersResponse = {} } = useQuery({
     queryKey: ['persisted-customers', 'queues-services'],
-    queryFn: fetchPersistedCustomers,
+    queryFn: fetchAllPersistedCustomers,
     staleTime: CUSTOMER_CACHE_REFRESH_INTERVAL_MS,
     refetchInterval: CUSTOMER_CACHE_REFRESH_INTERVAL_MS,
   });

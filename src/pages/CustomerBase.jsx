@@ -22,7 +22,7 @@ import {
 import {
   fetchCustomerSyncLogs,
   fetchCustomerSyncState,
-  fetchPersistedCustomers,
+  fetchAllPersistedCustomers,
 } from '@/lib/customer-sync-api';
 import { CONVERSATION_BACKGROUND_SUMMARY_LIMIT, CONVERSATION_REFRESH_INTERVAL_MS } from '@/lib/performance-config';
 import { cn } from '@/lib/utils';
@@ -139,7 +139,7 @@ export default function CustomerBase() {
     isFetching: isFetchingCustomers,
   } = useQuery({
     queryKey: ['persisted-customers'],
-    queryFn: fetchPersistedCustomers,
+    queryFn: fetchAllPersistedCustomers,
     staleTime: 60000,
   });
 

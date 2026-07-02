@@ -286,7 +286,8 @@ const resolveMessageRouteSelector = (message = {}, fallbackSelector = null) => {
 };
 
 export const normalizeWhatsappConversation = (conversation = {}) => {
-  const customer = conversation.customer || {};
+  const customerSummary = conversation.customer_summary || conversation.customerSummary || null;
+  const customer = customerSummary || conversation.customer || {};
   const labels = Array.isArray(conversation.labels) ? conversation.labels : [];
   const rawLabelIds = [
     ...(Array.isArray(conversation.label_ids) ? conversation.label_ids : []),
@@ -330,6 +331,7 @@ export const normalizeWhatsappConversation = (conversation = {}) => {
     waba_id: conversation.waba_id || conversation.wabaId || null,
     meta_route_key: conversation.meta_route_key || conversation.metaRouteKey || conversation.route_key || conversation.routeKey || null,
     customer,
+    customer_summary: customerSummary,
     sector: conversation.sector || '',
     tags: manualTags,
     labels,

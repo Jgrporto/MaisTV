@@ -496,7 +496,8 @@ export function enrichConversationsWithLabels(conversations = [], customerRows =
   const serviceRoutingLabelIds = new Set(normalizeLabelIdArray(options.serviceRoutingLabelIds || []));
 
   return safeConversations.map((conversation) => {
-    const matchedCustomer = findCustomerByConversationPhone(customerLookup, conversation?.contact_phone);
+    const matchedCustomer = conversation?.customer_summary || conversation?.customerSummary ||
+      findCustomerByConversationPhone(customerLookup, conversation?.contact_phone);
     const serviceOverrideLabelId = canonicalizeLabelId(
       conversation?.service_label_override_id || conversation?.serviceLabelOverrideId || ''
     );
@@ -555,8 +556,8 @@ export function enrichConversationsWithLabels(conversations = [], customerRows =
       primary_label: stageLabel || automaticLabel || assignedCustomLabels[0] || null,
       customer: {
         ...(conversation.customer || {}),
-        existsInBase: Boolean(matchedCustomer),
-        isTeste: Boolean(isTrial),
+        existsInBase: Boolean(matchedCustomer?.existsInBase ?? matchedCustomer),
+        isTeste: Boolean(matchedCustomer?.isTest ?? isTrial),
         username: matchedCustomer?.username || conversation.customer?.username || '',
         password: customerPassword,
         senha: customerPassword,
