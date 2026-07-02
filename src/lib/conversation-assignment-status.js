@@ -23,10 +23,16 @@ export const ASSIGNMENT_SOURCE_LABELS = Object.freeze({
 const findServiceById = (services = [], serviceId = '') =>
   (Array.isArray(services) ? services : []).find((service) => String(service?.id || '').trim() === String(serviceId || '').trim()) || null;
 
-const getServiceIds = (conversation = {}) =>
+const getQueuedServiceIds = (conversation = {}) =>
   normalizeStringArray([
     conversation.queued_service_id,
     ...(Array.isArray(conversation.queued_service_ids) ? conversation.queued_service_ids : []),
+    conversation.queue_id,
+    conversation.service_id,
+  ]);
+
+const getInferredServiceIds = (conversation = {}) =>
+  normalizeStringArray([
     ...(Array.isArray(conversation.matching_service_ids) ? conversation.matching_service_ids : []),
     ...(Array.isArray(conversation.accessible_service_ids) ? conversation.accessible_service_ids : []),
   ]);
@@ -38,7 +44,10 @@ const resolveServiceName = (conversation = {}, services = []) => {
   const explicitNames = normalizeStringArray(conversation.queued_service_names);
   if (explicitNames.length) return explicitNames.join(', ');
 
-  const serviceIds = getServiceIds(conversation);
+  // Queue metadata is authoritative. Label-derived matches are only a legacy
+  // fallback and must not be presented as simultaneous queue membership.
+  const queuedServiceIds = getQueuedServiceIds(conversation);
+  const serviceIds = queuedServiceIds.length ? queuedServiceIds : getInferredServiceIds(conversation);
   const serviceNames = serviceIds
     .map((serviceId) => findServiceById(services, serviceId)?.name || '')
     .filter(Boolean);

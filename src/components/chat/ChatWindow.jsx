@@ -2940,7 +2940,17 @@ export default function ChatWindow({
     : messages;
 
   const grouped = groupMessagesByDate(filteredMessages);
-  const visibleLabels = Array.isArray(conversation?.visible_labels) ? conversation.visible_labels : [];
+  const visibleLabels = useMemo(() => {
+    const primaryLabel = conversation?.primary_label || null;
+    const labels = Array.isArray(conversation?.visible_labels) ? conversation.visible_labels : [];
+    return Array.from(
+      new Map(
+        [primaryLabel, ...labels]
+          .filter((label) => label?.id)
+          .map((label) => [String(label.id), label]),
+      ).values(),
+    );
+  }, [conversation?.primary_label, conversation?.visible_labels]);
 
   const renderThreadItem = (item, index) => {
     if (item.type === 'separator') {

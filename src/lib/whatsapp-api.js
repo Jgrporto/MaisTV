@@ -382,6 +382,12 @@ export const normalizeWhatsappConversation = (conversation = {}) => {
     queue_status: conversation.queue_status || conversation.queueStatus || (conversation.assignment_status === 'queued' ? 'waiting' : conversation.assignment_status || ''),
     queued_service_id: conversation.queued_service_id || conversation.queue_id || conversation.service_id || '',
     queued_service_ids: Array.from(new Set([conversation.queue_id,conversation.service_id].map((value)=>String(value||'').trim()).filter(Boolean))),
+    queued_service_name: conversation.queued_service_name || conversation.queuedServiceName || '',
+    queued_service_names: Array.isArray(conversation.queued_service_names)
+      ? conversation.queued_service_names
+      : Array.isArray(conversation.queuedServiceNames)
+        ? conversation.queuedServiceNames
+        : [],
     matching_service_ids: Array.from(new Set([conversation.queue_id,conversation.service_id].map((value)=>String(value||'').trim()).filter(Boolean))),
     is_pinned: Boolean(conversation.is_pinned || conversation.isPinned),
     manual_unread: Boolean(conversation.manual_unread || conversation.manualUnread),
