@@ -13,6 +13,7 @@ import {
 } from './labels-api';
 import { queryClientInstance } from './query-client';
 import { LABEL_REFRESH_INTERVAL_MS as CONFIGURED_LABEL_REFRESH_INTERVAL_MS } from './performance-config';
+import { requestChatJson } from '@/features/chat/api/chat-api';
 
 const LEGACY_CUSTOM_LABELS_STORAGE_KEY = 'saastv:labels:custom:v1';
 const LEGACY_LABEL_ASSIGNMENTS_STORAGE_KEY = 'saastv:labels:assignments:v1';
@@ -20,7 +21,6 @@ const LEGACY_STAGE_ASSIGNMENTS_STORAGE_KEY = 'saastv:labels:stages:v1';
 const LEGACY_LABEL_MIGRATION_KEY = 'saastv:labels:migrated-to-store:v1';
 const LABELS_CHANGE_EVENT = 'saastv:labels:change';
 const LABELS_QUERY_KEY = ['labels', 'catalog'];
-const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
 export const LABEL_REFRESH_INTERVAL_MS = CONFIGURED_LABEL_REFRESH_INTERVAL_MS;
 const LABEL_CATALOG_REFRESH_INTERVAL_MS = LABEL_REFRESH_INTERVAL_MS;
@@ -283,35 +283,6 @@ async function migrateLegacyLabelsIfNeeded() {
   return await legacyMigrationPromise;
 }
 
-function parseDate(value) {
-  const raw = String(value || '').trim();
-  if (!raw) {
-    return null;
-  }
-
-  const timestamp = Date.parse(raw);
-  if (!Number.isFinite(timestamp)) {
-    const brazilianDate = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/);
-    if (brazilianDate) {
-      const [, day, month, year, hour = '00', minute = '00', second = '00'] = brazilianDate;
-      const parsedBrazilianDate = new Date(
-        Number(year),
-        Number(month) - 1,
-        Number(day),
-        Number(hour),
-        Number(minute),
-        Number(second)
-      );
-      return Number.isNaN(parsedBrazilianDate.getTime()) ? null : parsedBrazilianDate;
-    }
-
-    return null;
-  }
-
-  const date = new Date(timestamp);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
 function toBooleanFlag(value) {
   if (typeof value === 'boolean') return value;
 
@@ -333,57 +304,6 @@ function resolveConversationTrialFlag(conversation, customerRow) {
       conversation?.sourceConversation?.customer?.is_trial ??
       conversation?.sourceConversation?.customer?.isTrial
   );
-}
-
-function differenceInCalendarDaysFromToday(date) {
-  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
-    return null;
-  }
-
-  const today = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const valueStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-
-  return Math.floor((todayStart.getTime() - valueStart.getTime()) / DAY_IN_MS);
-}
-
-function findCreationDateInObject(value, depth = 0) {
-  if (!value || typeof value !== 'object' || depth > 3) {
-    return null;
-  }
-
-  const keys = [
-    'created_at',
-    'createdAt',
-    'created_date',
-    'createdDate',
-    'creation_date',
-    'creationDate',
-    'registered_at',
-    'registeredAt',
-    'cadastro',
-    'data_cadastro',
-  ];
-
-  for (const key of keys) {
-    const parsed = parseDate(value?.[key]);
-    if (parsed) {
-      return parsed;
-    }
-  }
-
-  for (const key of ['raw', 'user', 'customer', 'account', 'profile']) {
-    const parsed = findCreationDateInObject(value?.[key], depth + 1);
-    if (parsed) {
-      return parsed;
-    }
-  }
-
-  return null;
-}
-
-function resolveCustomerCreatedDate(customerRow) {
-  return findCreationDateInObject(customerRow?.sourceCustomer || customerRow);
 }
 
 export function getLabelBadgeStyle(label) {
@@ -451,7 +371,7 @@ export async function toggleConversationCustomLabel(conversationId, labelId, ena
   return nextLabelIds;
 }
 
-export async function saveConversationStageLabel(conversationId, labelId, customLabels = listCustomLabels()) {
+export async function saveConversationStageLabel(conversationId, labelId, customLabels = listCustomLabels(), phone = '') {
   const safeConversationId = String(conversationId || '').trim();
   const safeLabelId = String(labelId || '').trim();
 
@@ -471,6 +391,13 @@ export async function saveConversationStageLabel(conversationId, labelId, custom
   }
 
   if (targetLabel.kind !== 'custom') {
+    if (phone) {
+      await requestChatJson(`/api/customer-profiles/${encodeURIComponent(phone)}/standard-label`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ standardLabel: targetLabel.id }),
+      });
+    }
     await saveConversationLabelStage(safeConversationId, '');
     await refreshLabelCatalog();
     return targetLabel;
@@ -479,35 +406,6 @@ export async function saveConversationStageLabel(conversationId, labelId, custom
   await saveConversationLabelStage(safeConversationId, safeLabelId);
   await refreshLabelCatalog();
   return targetLabel;
-}
-
-function resolveAutomaticLabel(conversation, customerRow) {
-  if (!customerRow) {
-    return SYSTEM_LABELS_BY_ID.get('system-lead') || null;
-  }
-
-  if (customerRow.hasConfirmedCustomer) {
-    const overdueDays = differenceInCalendarDaysFromToday(customerRow?.dueDate);
-
-    if (Number.isFinite(overdueDays) && overdueDays >= 1) {
-      return SYSTEM_LABELS_BY_ID.get('system-cancelados') || null;
-    }
-
-    const createdAt = resolveCustomerCreatedDate(customerRow);
-    const accountAgeInDays = differenceInCalendarDaysFromToday(createdAt);
-
-    if (Number.isFinite(accountAgeInDays) && accountAgeInDays >= 0 && accountAgeInDays <= 30) {
-      return SYSTEM_LABELS_BY_ID.get('system-pos-venda') || null;
-    }
-
-    return SYSTEM_LABELS_BY_ID.get('system-cliente') || null;
-  }
-
-  if (customerRow.hasExpiredTrial) {
-    return SYSTEM_LABELS_BY_ID.get('system-sql') || null;
-  }
-
-  return SYSTEM_LABELS_BY_ID.get('system-lead') || null;
 }
 
 function buildPhoneLookupKeys(value) {
@@ -603,7 +501,13 @@ export function enrichConversationsWithLabels(conversations = [], customerRows =
       conversation?.service_label_override_id || conversation?.serviceLabelOverrideId || ''
     );
     const serviceOverrideLabel = serviceOverrideLabelId ? getLabelById(serviceOverrideLabelId, customLabels) : null;
-    const automaticLabel = serviceOverrideLabel || resolveAutomaticLabel(conversation, matchedCustomer);
+    const persistedStandardLabel = getLabelById(
+      conversation?.standard_label || conversation?.standardLabel || '',
+      customLabels,
+    );
+    // PostgreSQL is authoritative. Rendering never recalculates the standard
+    // label from externally synchronized customer rows.
+    const automaticLabel = serviceOverrideLabel || persistedStandardLabel || SYSTEM_LABELS_BY_ID.get('system-lead') || null;
     const existingLabelIds = normalizeLabelIdArray([
       ...(Array.isArray(conversation?.label_ids) ? conversation.label_ids : []),
       ...(Array.isArray(conversation?.labelIds) ? conversation.labelIds : []),

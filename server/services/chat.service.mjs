@@ -8,6 +8,7 @@ import { addJob } from '../queues/queues.mjs';
 import { getChatAccessFilter } from './chat-authorization.service.mjs';
 import { withTransaction } from '../db/postgres.mjs';
 import { publishRealtimeEvent } from '../realtime/pubsub.mjs';
+import { resolveOutboundChannel, resolveWindowExpiresAt } from './channel-routing.service.mjs';
 const mediaShape=(row)=>row.media_id?{
   id:row.joined_media_id||row.media_id,
   mediaId:row.joined_media_id||row.media_id,
@@ -21,13 +22,13 @@ const mediaShape=(row)=>row.media_id?{
   hasThumbnail:Boolean(row.media_thumbnail_key),
   error:row.media_error_message||null,
 }:null;
-const CUSTOMER_WINDOW_MS=24*60*60*1000;
 export const shapeConversationSummary=(row,now=Date.now())=>{
-  const lastReceivedAt=row.last_received_at||null;
-  const lastReceivedAtMs=Date.parse(String(lastReceivedAt||''));
-  const isWithinCustomerWindow=Number.isFinite(lastReceivedAtMs)&&now-lastReceivedAtMs<=CUSTOMER_WINDOW_MS;
+  const lastReceivedAt=row.last_customer_message_at||row.last_received_at||null;
+  const windowExpiresAt=resolveWindowExpiresAt(row);
+  const windowExpiresAtMs=Date.parse(String(windowExpiresAt||''));
+  const isWithinCustomerWindow=Number.isFinite(windowExpiresAtMs)&&now<=windowExpiresAtMs;
   const userUnreadCount=Number.isFinite(Number(row.user_unread_count))?Number(row.user_unread_count):Number(row.unread_count||0);
-  return {id:row.id,customer_id:row.customer_id,contact_name:row.contact_name,contact_phone:row.contact_phone,avatar_url:row.avatar_url,last_message:row.last_message,last_message_type:row.last_message_type,last_message_at:row.last_message_at,last_received_at:lastReceivedAt,last_client_message_time:lastReceivedAt,unread_count:userUnreadCount,unreadCount:userUnreadCount,isUnread:userUnreadCount>0,status:row.status,priority:row.priority,assigned_agent_id:row.assigned_agent_id,assigned_agent_name:row.assigned_agent_name,assigned_at:row.assigned_at,assignment_status:row.assignment_status,last_assignment_at:row.last_assignment_at,queue_id:row.queue_id,service_id:row.service_id,route_key:row.route_key,phone_number_id:row.phone_number_id,last_read_at:row.last_read_at,last_read_by:row.last_read_by,tags:row.tags_json||[],labels:row.labels_json||[],is_pinned:row.is_pinned,manual_unread:row.manual_unread,is_within_customer_window:isWithinCustomerWindow,source_accounts:row.source_accounts_json||[],default_route_selector:row.default_route_selector_json,active_route_selector:row.active_route_selector_json};
+  return {id:row.id,customer_id:row.customer_id,contact_name:row.contact_name,contact_phone:row.contact_phone,normalized_phone:row.normalized_phone,avatar_url:row.avatar_url,last_message:row.last_message,last_message_type:row.last_message_type,last_message_at:row.last_message_at,last_received_at:lastReceivedAt,last_client_message_time:lastReceivedAt,lastCustomerMessageAt:lastReceivedAt,windowExpiresAt,is24hWindowOpen:isWithinCustomerWindow,unread_count:userUnreadCount,unreadCount:userUnreadCount,isUnread:userUnreadCount>0,status:row.status,priority:row.priority,assigned_agent_id:row.assigned_agent_id,assigned_agent_name:row.assigned_agent_name,assigned_at:row.assigned_at,assignment_status:row.assignment_status,last_assignment_at:row.last_assignment_at,queue_id:row.queue_id,service_id:row.service_id,route_key:row.last_inbound_route_key||row.route_key,phone_number_id:row.last_inbound_phone_number_id||row.phone_number_id,last_inbound_route_key:row.last_inbound_route_key,last_inbound_phone_number_id:row.last_inbound_phone_number_id,last_24h_window_expires_at:windowExpiresAt,standard_label:row.standard_label,standard_label_source:row.standard_label_source,standard_label_reason:row.standard_label_reason,standard_label_overridden:row.standard_label_overridden,standard_label_updated_at:row.standard_label_updated_at,last_read_at:row.last_read_at,last_read_by:row.last_read_by,tags:row.tags_json||[],labels:row.labels_json||[],is_pinned:row.is_pinned,manual_unread:row.manual_unread,is_within_customer_window:isWithinCustomerWindow,source_accounts:row.source_accounts_json||[],default_route_selector:row.default_route_selector_json,active_route_selector:row.active_route_selector_json};
 };
 export const getConversationPage=async({auth,limit,cursor,status})=>{
   const tenantId=auth.tenantId;const access=getChatAccessFilter(auth);
@@ -48,9 +49,18 @@ export const queueOutboundMessage=async({auth,input})=>{
   if(messageType!=='text')throw Object.assign(new Error('The new outbound route currently accepts text only; use the compatible /api/whatsapp/send-* media routes.'),{statusCode:400});
   const conversation=await getConversation(tenantId,input.conversationId,access);
   if(!conversation) throw Object.assign(new Error('Conversation not found.'),{statusCode:404});
+  const outboundChannel=resolveOutboundChannel({conversation,deliveryKind:'free_text'});
+  if(!outboundChannel.allowed){
+    throw Object.assign(new Error('A janela de 24h esta fechada. Use um template HSM, que sera enviado pelo numero default.'),{statusCode:409,code:'customer_window_closed'});
+  }
   const clientMessageId=String(input.clientMessageId||crypto.randomUUID());
   const result=await withTransaction(async(client)=>{
-    const message=await insertPendingOutbound({tenantId,conversationId:input.conversationId,clientMessageId,type:messageType,body:input.body,raw:{requestedBy:userId}},client);
+    const locked=(await client.query('SELECT * FROM conversations WHERE tenant_id=$1 AND id=$2 FOR UPDATE',[tenantId,input.conversationId])).rows[0];
+    const lockedChannel=resolveOutboundChannel({conversation:locked,deliveryKind:'free_text'});
+    if(!lockedChannel.allowed) throw Object.assign(new Error('A janela de 24h esta fechada. Use um template HSM.'),{statusCode:409,code:'customer_window_closed'});
+    const routeKey=lockedChannel.routeKey;
+    const phoneNumberId=lockedChannel.phoneNumberId;
+    const message=await insertPendingOutbound({tenantId,conversationId:input.conversationId,clientMessageId,type:messageType,body:input.body,routeKey,phoneNumberId,raw:{requestedBy:userId,deliveryKind:'free_text',routeKey,phoneNumberId}},client);
     const updatedConversation=await updateConversationLastOutbound(client,input.conversationId,message);
     return {message,conversation:updatedConversation||conversation};
   });

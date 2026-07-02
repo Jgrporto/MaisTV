@@ -301,6 +301,7 @@ export const normalizeWhatsappConversation = (conversation = {}) => {
     department: resolveDepartment(conversation.sector),
     contact_name: conversation.contact_name || customer.name || 'Contato sem nome',
     contact_phone: conversation.contact_phone || customer.phone || '',
+    normalized_phone: conversation.normalized_phone || conversation.normalizedPhone || conversation.contact_phone || customer.phone || '',
     phone_number_id:
       conversation.phone_number_id ||
       conversation.phoneNumberId ||
@@ -356,6 +357,7 @@ export const normalizeWhatsappConversation = (conversation = {}) => {
       conversation.lastMessageTime ||
       null,
     is_within_customer_window: (() => {
+      if (typeof conversation.is24hWindowOpen === 'boolean') return conversation.is24hWindowOpen;
       const referenceTime =
         conversation.lastClientMessageTime ||
         conversation.last_received_at ||
@@ -379,6 +381,14 @@ export const normalizeWhatsappConversation = (conversation = {}) => {
     queue_id: conversation.queue_id || conversation.queueId || '',
     service_id: conversation.service_id || conversation.serviceId || '',
     assignment_status: conversation.assignment_status || conversation.assignmentStatus || '',
+    standard_label: conversation.standard_label || conversation.standardLabel || '',
+    standard_label_source: conversation.standard_label_source || conversation.standardLabelSource || '',
+    standard_label_reason: conversation.standard_label_reason || conversation.standardLabelReason || '',
+    standard_label_overridden: Boolean(conversation.standard_label_overridden || conversation.standardLabelOverridden),
+    standard_label_updated_at: conversation.standard_label_updated_at || conversation.standardLabelUpdatedAt || '',
+    last_inbound_route_key: conversation.last_inbound_route_key || conversation.lastInboundRouteKey || conversation.route_key || '',
+    last_inbound_phone_number_id: conversation.last_inbound_phone_number_id || conversation.lastInboundPhoneNumberId || conversation.phone_number_id || '',
+    last_24h_window_expires_at: conversation.last_24h_window_expires_at || conversation.windowExpiresAt || '',
     queue_status: conversation.queue_status || conversation.queueStatus || (conversation.assignment_status === 'queued' ? 'waiting' : conversation.assignment_status || ''),
     queued_service_id: conversation.queued_service_id || conversation.queue_id || conversation.service_id || '',
     queued_service_ids: Array.from(new Set([conversation.queue_id,conversation.service_id].map((value)=>String(value||'').trim()).filter(Boolean))),

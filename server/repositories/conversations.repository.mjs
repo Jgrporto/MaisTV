@@ -14,18 +14,9 @@ export const listConversations = async ({ tenantId, status, limit, cursor, acces
   const result = await query(`
     SELECT c.*,
       COALESCE(c.last_message_at,c.created_at) AS cursor_at,
-      latest_inbound.last_received_at,
+      c.last_customer_message_at AS last_received_at,
       COALESCE(c.unread_count,0) AS user_unread_count
     FROM conversations c
-    LEFT JOIN LATERAL (
-      SELECT m.created_at AS last_received_at
-      FROM messages m
-      WHERE m.tenant_id=c.tenant_id
-        AND m.conversation_id=c.id
-        AND m.direction='inbound'
-      ORDER BY m.created_at DESC,m.id DESC
-      LIMIT 1
-    ) latest_inbound ON true
     WHERE ${where.join(' AND ')}
     ORDER BY COALESCE(c.last_message_at,c.created_at) DESC,c.id DESC
     LIMIT $${values.length}
@@ -42,25 +33,39 @@ export const getConversation = async (tenantId, id, access = null) => {
   return (await query(`SELECT * FROM conversations WHERE tenant_id=$1 AND id=$2${accessSql}`, values)).rows[0] || null;
 };
 export const upsertInboundConversation = async (client, data) => (await client.query(`INSERT INTO conversations
-  (tenant_id,contact_phone,contact_name,last_message,last_message_type,last_message_at,unread_count,
+  (tenant_id,contact_phone,normalized_phone,contact_name,last_message,last_message_type,last_message_at,unread_count,
    queue_id,service_id,assigned_agent_id,assignment_status,route_key,phone_number_id,
+   last_inbound_route_key,last_inbound_phone_number_id,last_customer_message_at,last_24h_window_expires_at,
+   standard_label,standard_label_source,standard_label_reason,standard_label_overridden,standard_label_updated_at,
    source_accounts_json,active_route_selector_json,default_route_selector_json)
-  VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,$9,CASE WHEN $9::text IS NOT NULL THEN 'assigned' WHEN $7::text IS NOT NULL THEN 'queued' ELSE 'unassigned' END,$10,$11,$12::jsonb,$13::jsonb,$13::jsonb)
-  ON CONFLICT (tenant_id,contact_phone) DO UPDATE SET
+  VALUES ($1,$2,$3,$4,$5,$6,$7,0,$8,$9,$10,CASE WHEN $10::text IS NOT NULL THEN 'assigned' WHEN $8::text IS NOT NULL THEN 'queued' ELSE 'unassigned' END,$11,$12,
+    $11,$12,$7,$7::timestamptz + interval '24 hours',$13,$14,$15,$16,$17,$18::jsonb,$19::jsonb,$19::jsonb)
+  ON CONFLICT (tenant_id,normalized_phone) WHERE normalized_phone IS NOT NULL DO UPDATE SET
+  contact_phone=EXCLUDED.contact_phone,
   contact_name=COALESCE(NULLIF(EXCLUDED.contact_name,''),conversations.contact_name),
-  queue_id=COALESCE(conversations.queue_id,EXCLUDED.queue_id),service_id=COALESCE(conversations.service_id,EXCLUDED.service_id),
+  queue_id=EXCLUDED.queue_id,service_id=EXCLUDED.service_id,
   assigned_agent_id=COALESCE(conversations.assigned_agent_id,EXCLUDED.assigned_agent_id),
   assignment_status=CASE
     WHEN conversations.status='closed' OR conversations.assignment_status='closed' THEN 'closed'
     WHEN conversations.assigned_agent_id IS NOT NULL THEN conversations.assignment_status
     WHEN COALESCE(conversations.queue_id,EXCLUDED.queue_id) IS NOT NULL THEN 'queued'
     ELSE 'unassigned' END,
-  route_key=COALESCE(EXCLUDED.route_key,conversations.route_key),phone_number_id=COALESCE(EXCLUDED.phone_number_id,conversations.phone_number_id),
-  source_accounts_json=CASE WHEN EXCLUDED.source_accounts_json='[]'::jsonb THEN conversations.source_accounts_json ELSE EXCLUDED.source_accounts_json END,
+  route_key=EXCLUDED.route_key,phone_number_id=EXCLUDED.phone_number_id,
+  last_inbound_route_key=EXCLUDED.last_inbound_route_key,last_inbound_phone_number_id=EXCLUDED.last_inbound_phone_number_id,
+  last_customer_message_at=GREATEST(COALESCE(conversations.last_customer_message_at,EXCLUDED.last_customer_message_at),EXCLUDED.last_customer_message_at),
+  last_24h_window_expires_at=GREATEST(COALESCE(conversations.last_24h_window_expires_at,EXCLUDED.last_24h_window_expires_at),EXCLUDED.last_24h_window_expires_at),
+  standard_label=EXCLUDED.standard_label,standard_label_source=EXCLUDED.standard_label_source,
+  standard_label_reason=EXCLUDED.standard_label_reason,standard_label_overridden=EXCLUDED.standard_label_overridden,
+  standard_label_updated_at=EXCLUDED.standard_label_updated_at,
+  source_accounts_json=CASE WHEN EXCLUDED.source_accounts_json='[]'::jsonb THEN conversations.source_accounts_json ELSE (
+    SELECT COALESCE(jsonb_agg(account),'[]'::jsonb)
+    FROM (SELECT DISTINCT account FROM jsonb_array_elements(conversations.source_accounts_json || EXCLUDED.source_accounts_json) AS items(account)) unique_accounts
+  ) END,
   active_route_selector_json=COALESCE(EXCLUDED.active_route_selector_json,conversations.active_route_selector_json),
   default_route_selector_json=COALESCE(conversations.default_route_selector_json,EXCLUDED.default_route_selector_json),updated_at=now() RETURNING *`,
-  [data.tenantId,data.contactPhone,data.contactName||null,data.body||null,data.type,data.createdAt,
-    data.queueId||null,data.serviceId||null,data.assignedAgentId||null,data.routeKey||null,data.phoneNumberId||null,
+  [data.tenantId,data.contactPhone,data.normalizedPhone,data.contactName||null,data.body||null,data.type,data.createdAt,
+    data.queueId||null,data.serviceId||data.queueId||null,data.assignedAgentId||null,data.routeKey||null,data.phoneNumberId||null,
+    data.standardLabel||null,data.standardLabelSource||null,data.standardLabelReason||null,Boolean(data.standardLabelOverridden),data.standardLabelUpdatedAt||null,
     JSON.stringify(data.routeSelector?[data.routeSelector]:[]),data.routeSelector?JSON.stringify(data.routeSelector):null])).rows[0];
 export const updateConversationLastMessage = async (client, conversationId, message) => client.query(`UPDATE conversations SET
   last_message_id=CASE WHEN last_message_at IS NULL OR $5>=last_message_at THEN $2 ELSE last_message_id END,

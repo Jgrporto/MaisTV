@@ -60,6 +60,8 @@ import { attachSlowRouteLogger } from './middlewares/slow-route-logger.mjs';
 import { handleCustomerReadRoutes } from './routes/customers.routes.mjs';
 import { handleDashboardRoutes } from './routes/dashboard.routes.mjs';
 import { createLogoutAssignmentRecoveryService } from './services/logout-assignment-recovery.service.mjs';
+import { syncCustomerProfilesFromRows } from './services/customer-profile.service.mjs';
+import { normalizePhone as normalizeCanonicalPhone } from './utils/phone-normalization.mjs';
 import { registerChatArchitecture } from './routes/register-chat-architecture.mjs';
 import { captureException, initSentry } from './observability/index.mjs';
 import { askTavinho, getTavinhoKnowledgeSummary } from './tavinho/service.mjs';
@@ -820,7 +822,7 @@ const normalizeBaseUrl = (url) => {
   }
 };
 
-const normalizePhone = (value) => String(value || '').replace(/\D/g, '');
+const normalizePhone = (value) => normalizeCanonicalPhone(value);
 const normalizePhoneDisplay = (value) => {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -9697,6 +9699,12 @@ const finishCustomerSyncSuccess = async (mode, startedAt, result) => {
     return current;
   });
 
+  await syncCustomerProfilesFromRows({
+    tenantId: process.env.CHAT_DEFAULT_TENANT_ID || 'maistv',
+    rows: customers,
+    syncedAt: finishedAt,
+  });
+
   return store.customerSync;
 };
 
@@ -9801,6 +9809,12 @@ const finishCustomerSyncImportedSuccess = async (payload = {}) => {
       message: `Importacao ${source} concluida com ${customers.length} cliente(s).`,
     });
     return current;
+  });
+
+  await syncCustomerProfilesFromRows({
+    tenantId: process.env.CHAT_DEFAULT_TENANT_ID || 'maistv',
+    rows: customers,
+    syncedAt: finishedAt,
   });
 
   customerSyncRunning = false;

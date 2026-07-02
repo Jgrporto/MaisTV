@@ -85,7 +85,6 @@ import {
 
 const DEFAULT_PAGE_SIZE = 20;
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 300, 400];
-const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
 const LABEL_ID_ALIASES = Object.freeze({
   'label-lead': ['system-lead'],
@@ -329,18 +328,20 @@ const getCustomerWindowReference = (customer) => {
         conversation?.sourceConversation?.last_received_at ||
         '',
       forcedInside: Boolean(conversation?.is_within_customer_window),
+      isOpen:
+        typeof conversation?.is24hWindowOpen === 'boolean'
+          ? conversation.is24hWindowOpen
+          : Boolean(conversation?.is_within_customer_window),
+      expiresAt: conversation?.windowExpiresAt || conversation?.last_24h_window_expires_at || '',
     }))
     .filter((item) => item.value || item.forcedInside)
     .sort((left, right) => (Date.parse(right.value || '') || 0) - (Date.parse(left.value || '') || 0));
 
   const latest = candidates[0] || null;
-  const referenceMs = Date.parse(String(latest?.value || ''));
-  const within24h = Boolean(latest?.forcedInside) || (Number.isFinite(referenceMs) && Date.now() - referenceMs <= DAY_IN_MS);
-
   return {
     timestamp: latest?.value || '',
-    within24h,
-    expiresAt: Number.isFinite(referenceMs) ? new Date(referenceMs + DAY_IN_MS).toISOString() : '',
+    within24h: Boolean(latest?.isOpen || latest?.forcedInside),
+    expiresAt: latest?.expiresAt || '',
   };
 };
 

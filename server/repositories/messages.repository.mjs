@@ -20,15 +20,15 @@ export const listMessages = async ({ tenantId, conversationId, limit, cursor }) 
     ORDER BY messages.created_at DESC,messages.id DESC LIMIT $${values.length}`, values)).rows;
 };
 export const insertInboundMessage = async (client, data) => (await client.query(`INSERT INTO messages
-  (tenant_id,conversation_id,provider_message_id,direction,sender_type,type,body,status,media_id,raw_json,created_at)
-  VALUES ($1,$2,$3,'inbound','customer',$4,$5,'received',$6,$7::jsonb,$8)
+  (tenant_id,conversation_id,provider_message_id,direction,sender_type,type,body,status,media_id,raw_json,created_at,route_key,phone_number_id)
+  VALUES ($1,$2,$3,'inbound','customer',$4,$5,'received',$6,$7::jsonb,$8,$9,$10)
   ON CONFLICT (tenant_id,provider_message_id) WHERE provider_message_id IS NOT NULL DO NOTHING RETURNING *`,
-  [data.tenantId,data.conversationId,data.providerMessageId,data.type,data.body || null,data.mediaId||null,JSON.stringify(data.raw),data.createdAt])).rows[0] || null;
+  [data.tenantId,data.conversationId,data.providerMessageId,data.type,data.body || null,data.mediaId||null,JSON.stringify(data.raw),data.createdAt,data.routeKey||null,data.phoneNumberId||null])).rows[0] || null;
 export const insertPendingOutbound = async (data, executor = null) => (await (executor || { query }).query(`INSERT INTO messages
-  (tenant_id,conversation_id,client_message_id,direction,sender_type,type,body,status,raw_json)
-  VALUES ($1,$2,$3,'outbound','agent',$4,$5,'pending',$6::jsonb)
+  (tenant_id,conversation_id,client_message_id,direction,sender_type,type,body,status,raw_json,route_key,phone_number_id)
+  VALUES ($1,$2,$3,'outbound','agent',$4,$5,'pending',$6::jsonb,$7,$8)
   ON CONFLICT (tenant_id,client_message_id) DO UPDATE SET client_message_id=EXCLUDED.client_message_id RETURNING *`,
-  [data.tenantId,data.conversationId,data.clientMessageId,data.type,data.body || null,JSON.stringify(data.raw || {})])).rows[0];
+  [data.tenantId,data.conversationId,data.clientMessageId,data.type,data.body || null,JSON.stringify(data.raw || {}),data.routeKey||null,data.phoneNumberId||null])).rows[0];
 export const findMessageById = async (tenantId, id) => (await query('SELECT * FROM messages WHERE tenant_id=$1 AND id=$2', [tenantId,id])).rows[0] || null;
 export const findMessageWithMedia = async (tenantId, id) => (await query(`SELECT messages.*,
   media_files.storage_key,media_files.mime_type AS media_mime_type,media_files.status AS media_status,
@@ -40,6 +40,10 @@ export const findMessageWithMedia = async (tenantId, id) => (await query(`SELECT
 export const claimMessageForSending = async (tenantId,id) => (await query("UPDATE messages SET status='sending', error_message=NULL WHERE tenant_id=$1 AND id=$2 AND status='pending' RETURNING *",[tenantId,id])).rows[0]||null;
 export const resetMessagePending = async (tenantId,id) => query("UPDATE messages SET status='pending' WHERE tenant_id=$1 AND id=$2 AND status='sending'",[tenantId,id]);
 export const markMessageSent = async (tenantId, id, providerMessageId) => query("UPDATE messages SET provider_message_id=$3,status='sent',error_message=NULL,sent_at=now() WHERE tenant_id=$1 AND id=$2", [tenantId,id,providerMessageId]);
+export const setMessageOutboundChannel = async (tenantId, id, { routeKey, phoneNumberId }) => query(
+  'UPDATE messages SET route_key=$3,phone_number_id=$4 WHERE tenant_id=$1 AND id=$2',
+  [tenantId,id,routeKey||null,phoneNumberId||null],
+);
 export const markMessageFailed = async (tenantId, id, errorMessage) => query("UPDATE messages SET status='failed',error_message=$3 WHERE tenant_id=$1 AND id=$2", [tenantId,id,String(errorMessage || 'Outbound send failed.').slice(0,2000)]);
 export const recordStatus = async ({ tenantId, providerMessageId, status, raw }) => query(`WITH target AS (SELECT id FROM messages WHERE tenant_id=$1 AND provider_message_id=$2)
   INSERT INTO message_statuses (tenant_id,message_id,provider_message_id,status,raw_json) SELECT $1,id,$2,$3,$4::jsonb FROM target

@@ -10,6 +10,8 @@ import { processPostgresChatbotForInbound } from './chatbot-postgres-runtime.ser
 import { getLogger } from './logger.service.mjs';
 import { resolveRouteQueueMapping } from '../repositories/assignment.repository.mjs';
 import { queueConversationAssignment } from './assignment.service.mjs';
+import { resolveOperationalProfile } from './customer-profile.service.mjs';
+import { normalizePhone } from '../utils/phone-normalization.mjs';
 
 const typeOf = (message) => ['image', 'audio', 'video', 'document', 'sticker'].find((type) => message?.[type]) || message?.type || 'text';
 const bodyOf = (message, type) => message?.text?.body
@@ -36,7 +38,7 @@ export const normalizeMetaPayload = (payload) => {
         const media = message[type] && type !== 'text' ? message[type] : null;
         out.messages.push({
           providerMessageId: message.id,
-          contactPhone: message.from,
+          contactPhone: normalizePhone(message.from),
           contactName: names.get(message.from) || '',
           phoneNumberId,
           routeSelector,
@@ -76,13 +78,20 @@ export const processInboundWebhook = async (data) => {
         fallbackQueueId: item.queueId,
         fallbackServiceId: item.serviceId,
       });
-      const routedItem = {
-        ...item,
-        routeKey,
-        queueId: mapping?.queue_id || item.queueId || null,
-        serviceId: mapping?.service_id || item.serviceId || null,
-      };
       const result = await withTransaction(async (client) => {
+        const operational = await resolveOperationalProfile({ tenantId: data.tenantId, phone: item.contactPhone, executor: client });
+        const routedItem = {
+          ...item,
+          routeKey,
+          normalizedPhone: operational.normalizedPhone,
+          queueId: operational.queue?.id || mapping?.queue_id || item.queueId || null,
+          serviceId: operational.queue?.id || mapping?.service_id || item.serviceId || null,
+          standardLabel: operational.profile.standard_label,
+          standardLabelSource: operational.profile.standard_label_source,
+          standardLabelReason: operational.profile.standard_label_reason,
+          standardLabelOverridden: operational.profile.standard_label_overridden,
+          standardLabelUpdatedAt: operational.profile.standard_label_updated_at,
+        };
         const conversation = await upsertInboundConversation(client, { ...routedItem, tenantId: data.tenantId });
         const media = routedItem.media ? await upsertMediaMetadata(client, {
           ...routedItem.media,
@@ -98,7 +107,7 @@ export const processInboundWebhook = async (data) => {
         if (!message) return { duplicate: true, conversation };
         if (media) await linkMediaToMessage(client, { tenantId: data.tenantId, mediaId: media.id, messageId: message.id });
         await updateConversationLastMessage(client, conversation.id, message);
-        return { message, conversation, media };
+        return { message, conversation, media, routedItem };
       });
 
       if (result.message) {
@@ -132,7 +141,7 @@ export const processInboundWebhook = async (data) => {
         try {
           await processPostgresChatbotForInbound({
             tenantId: data.tenantId,
-            item: routedItem,
+            item: result.routedItem,
             message: result.message,
             conversation: result.conversation,
           });

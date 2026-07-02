@@ -67,7 +67,7 @@ import {
   NAVIGATION_PERMISSION_OPTIONS,
   normalizeNavigationPermissions,
 } from '@/lib/navigation-permissions';
-import { deleteService, fetchAvailableWhatsappNumbers, fetchServices, saveService } from '@/lib/services-api';
+import { deleteService, fetchServices, saveService } from '@/lib/services-api';
 import { normalizeService } from '@/lib/services';
 import { cn } from '@/lib/utils';
 import {
@@ -409,12 +409,6 @@ export default function Settings() {
   const { data: services = [], isLoading: servicesLoading } = useQuery({
     queryKey: ['settings', 'services'],
     queryFn: fetchServices,
-  });
-
-  const { data: availableNumbers = [] } = useQuery({
-    queryKey: ['settings', 'service-numbers', services.map((service) => service.id).join('|')],
-    queryFn: () => fetchAvailableWhatsappNumbers(services),
-    staleTime: 10000,
   });
 
   const { data: notificationSettingsData } = useQuery({
@@ -1214,7 +1208,7 @@ export default function Settings() {
         action: serviceDialogMode === 'create' ? 'created' : 'updated',
         detail:
           serviceDialogMode === 'create'
-            ? `Serviço criado com ${savedService.phone_numbers.length} numero(s), ${savedService.user_ids.length} usuario(s) e ${savedService.label_ids.length} etiqueta(s).`
+            ? `Fila criada com ${savedService.user_ids.length} usuario(s) e ${savedService.label_ids.length} etiqueta(s).`
             : 'Serviço atualizado com nova configuração operacional.',
       });
       await invalidateSettingsQueries();
@@ -2629,7 +2623,7 @@ export default function Settings() {
         <SectionHeading
           icon={Megaphone}
           title="Serviços"
-          description="Cadastre filas de atendimento, vincule numeros existentes, operadores responsaveis e etiquetas que controlam a visibilidade."
+          description="Cadastre filas e vincule operadores e etiquetas. Os numeros oficiais sao canais, nao regras de fila."
           action={
             <Button onClick={openCreateServiceDialog} disabled={!canEditServicesSection}>
               <Plus className="h-4 w-4" />
@@ -2644,7 +2638,6 @@ export default function Settings() {
               <TableRow className="bg-secondary/60">
                 <TableHead className="text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground">Nome</TableHead>
                 <TableHead className="text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground">Descrição</TableHead>
-                <TableHead className="text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground">Numero</TableHead>
                 <TableHead className="text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground">Usuarios atribuidos</TableHead>
                 <TableHead className="text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground">Etiquetas atribuidas</TableHead>
                 <TableHead className="w-[180px] text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground">Acoes</TableHead>
@@ -2653,7 +2646,7 @@ export default function Settings() {
             <TableBody>
               {!servicesLoading && services.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
+                  <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
                     Nenhum servico cadastrado.
                   </TableCell>
                 </TableRow>
@@ -2676,19 +2669,6 @@ export default function Settings() {
                     </TableCell>
                     <TableCell className="py-3 text-sm text-muted-foreground">
                       {service.description || 'Sem descricao cadastrada.'}
-                    </TableCell>
-                    <TableCell className="py-3">
-                      <div className="flex flex-wrap gap-1">
-                        {(service.phone_numbers || []).length ? (
-                          service.phone_numbers.map((phoneNumber) => (
-                            <Badge key={`${service.id}-${phoneNumber}`} variant="outline" className="rounded-full bg-secondary text-muted-foreground">
-                              {phoneNumber}
-                            </Badge>
-                          ))
-                        ) : (
-                          <span className="text-sm text-muted-foreground">Sem numero vinculado</span>
-                        )}
-                      </div>
                     </TableCell>
                     <TableCell className="py-3">
                       <div className="flex flex-wrap gap-1">
@@ -3013,7 +2993,6 @@ export default function Settings() {
         initialValue={selectedService}
         users={users}
         labelOptions={labelOptions}
-        availableNumbers={availableNumbers}
       />
 
       <AlertDialog open={confirmDialog.open} onOpenChange={handleConfirmDialogOpenChange}>

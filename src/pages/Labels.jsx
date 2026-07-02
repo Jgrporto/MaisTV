@@ -130,11 +130,12 @@ export default function Labels() {
 
   const handleStageChange = useCallback(async (conversationId, labelId) => {
     try {
-      await saveConversationStageLabel(conversationId, labelId, customLabels);
+      const conversation = conversations.find((item) => String(item.id) === String(conversationId));
+      await saveConversationStageLabel(conversationId, labelId, customLabels, conversation?.contact_phone || '');
     } catch (error) {
       toast.error(error?.message || 'Nao foi possivel mover a conversa entre etiquetas.');
     }
-  }, [customLabels]);
+  }, [conversations, customLabels]);
 
   const openLabelDetails = useCallback((labelId) => {
     setSelectedLabelId(labelId);

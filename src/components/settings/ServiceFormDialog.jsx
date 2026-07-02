@@ -18,7 +18,6 @@ import {
   DEFAULT_SERVICE_ICON_KEY,
   EMPTY_SERVICE,
   getServiceIconMeta,
-  normalizePhoneDisplay,
   normalizeService,
   SERVICE_ICON_OPTIONS,
 } from '@/lib/services';
@@ -29,7 +28,6 @@ const buildFormState = (value = null) => {
     id: normalized.id,
     name: normalized.name,
     description: normalized.description,
-    phone_numbers: normalized.phone_numbers,
     user_ids: normalized.user_ids,
     user_emails: normalized.user_emails,
     label_ids: normalized.label_ids,
@@ -87,7 +85,6 @@ export default function ServiceFormDialog({
   initialValue = null,
   users = [],
   labelOptions = [],
-  availableNumbers = [],
 }) {
   const [form, setForm] = useState(buildFormState(initialValue));
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -155,7 +152,7 @@ export default function ServiceFormDialog({
       await onSubmit({
         name: form.name.trim(),
         description: form.description.trim(),
-        phone_numbers: form.phone_numbers.map(normalizePhoneDisplay).filter(Boolean),
+        phone_numbers: [],
         user_ids: form.user_ids,
         user_emails: form.user_emails,
         label_ids: form.label_ids,
@@ -171,7 +168,7 @@ export default function ServiceFormDialog({
     mode === 'create' ? 'Criar servico' : mode === 'edit' ? 'Editar servico' : 'Visualizar servico';
   const description =
     mode === 'create'
-      ? 'Cadastre a fila, os numeros vinculados, os usuarios com acesso e as etiquetas que definem a visibilidade.'
+      ? 'Cadastre a fila, os usuarios responsaveis e as etiquetas que definem o destino operacional.'
       : 'Revise ou ajuste a configuracao operacional deste servico.';
 
   return (
@@ -261,18 +258,7 @@ export default function ServiceFormDialog({
             </div>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-3">
-            <ToggleList
-              title="Numeros vinculados"
-              description="A tela apenas vincula conexoes existentes no sistema."
-              items={availableNumbers.map((number) => ({ id: number, label: number }))}
-              selectedIds={form.phone_numbers}
-              onToggle={(item, checked) => handleToggleArray('phone_numbers', item.id, checked)}
-              disabled={isReadOnly || isSubmitting}
-              emptyMessage="Nenhum numero do WhatsApp foi detectado."
-              renderLabel={(item) => <span className="block text-sm text-foreground">{item.label}</span>}
-            />
-
+          <div className="grid gap-4 lg:grid-cols-2">
             <ToggleList
               title="Usuarios atribuidos"
               description="Usuarios selecionados poderao enxergar esta fila no atendimento."
@@ -293,8 +279,8 @@ export default function ServiceFormDialog({
 
             <ToggleList
               title="Etiquetas atribuidas"
-              description="Somente clientes com estas etiquetas ficarao visiveis dentro do servico."
-              items={labelOptions.map((label) => ({ ...label, id: String(label.id || '') }))}
+              description="A etiqueta padrao persistida define em qual fila o cliente entra."
+              items={labelOptions.filter((label) => label.kind === 'system').map((label) => ({ ...label, id: String(label.id || '') }))}
               selectedIds={form.label_ids}
               onToggle={(item, checked) => handleToggleArray('label_ids', item.id, checked)}
               disabled={isReadOnly || isSubmitting}
@@ -320,7 +306,6 @@ export default function ServiceFormDialog({
                 disabled={
                   isSubmitting ||
                   !form.name.trim() ||
-                  form.phone_numbers.length === 0 ||
                   form.user_ids.length === 0 ||
                   form.label_ids.length === 0
                 }
