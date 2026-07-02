@@ -23,14 +23,16 @@ const messageSelector = (message = {}) => normalizeRouteSelector({
   });
 
 export const resolveConversationReplyRouteSelector = ({ conversation = {}, messages = [] } = {}) => {
+  const safeConversation = conversation && typeof conversation === 'object' ? conversation : {};
+  const safeMessages = Array.isArray(messages) ? messages : [];
   const persistedLastInbound = normalizeRouteSelector({
-    phoneNumberId: conversation.last_inbound_phone_number_id || conversation.lastInboundPhoneNumberId,
-    routeKey: conversation.last_inbound_route_key || conversation.lastInboundRouteKey,
+    phoneNumberId: safeConversation.last_inbound_phone_number_id || safeConversation.lastInboundPhoneNumberId,
+    routeKey: safeConversation.last_inbound_route_key || safeConversation.lastInboundRouteKey,
   });
   if (persistedLastInbound) return persistedLastInbound;
 
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index] || {};
+  for (let index = safeMessages.length - 1; index >= 0; index -= 1) {
+    const message = safeMessages[index] || {};
     const senderType = text(message.sender_type || message.senderType).toLowerCase();
     const direction = text(message.direction).toLowerCase();
     if (senderType !== 'client' && direction !== 'inbound') continue;
@@ -40,13 +42,13 @@ export const resolveConversationReplyRouteSelector = ({ conversation = {}, messa
 
   return normalizeRouteSelector({
     phoneNumberId:
-      conversation.phone_number_id ||
-      conversation.phoneNumberId,
-    displayPhoneNumber: conversation.display_phone_number || conversation.displayPhoneNumber,
+      safeConversation.phone_number_id ||
+      safeConversation.phoneNumberId,
+    displayPhoneNumber: safeConversation.display_phone_number || safeConversation.displayPhoneNumber,
     routeKey:
-      conversation.route_key ||
-      conversation.routeKey ||
-      conversation.meta_route_key,
-  }) || normalizeRouteSelector(conversation.active_route_selector)
-    || normalizeRouteSelector(conversation.default_route_selector);
+      safeConversation.route_key ||
+      safeConversation.routeKey ||
+      safeConversation.meta_route_key,
+  }) || normalizeRouteSelector(safeConversation.active_route_selector)
+    || normalizeRouteSelector(safeConversation.default_route_selector);
 };

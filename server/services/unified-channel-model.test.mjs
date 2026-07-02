@@ -101,3 +101,7 @@ test('persisted last inbound channel wins over a stale loaded message page', () 
     displayPhoneNumber: null,
   });
 });
+
+test('empty attendance state does not crash while no conversation is selected', () => {
+  assert.equal(resolveConversationReplyRouteSelector({ conversation: null, messages: null }), null);
+});
