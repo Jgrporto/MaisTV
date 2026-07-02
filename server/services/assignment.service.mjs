@@ -61,6 +61,17 @@ const ensureTargetMembership = async (client, { tenantId, queueId, targetUserId 
   return membership;
 };
 
+const hasConversationQueueAccess = (access = {}, conversation = {}, userId = '') => {
+  const allowedIds = access.queueOrServiceIds || access.queueIds || [];
+  const queueId = text(conversation.queue_id);
+  const serviceId = text(conversation.service_id);
+  return Boolean(
+    text(conversation.assigned_agent_id) === text(userId) ||
+    (queueId && allowedIds.includes(queueId)) ||
+    (serviceId && allowedIds.includes(serviceId))
+  );
+};
+
 const mutateAssignment = async ({ auth, conversationId, targetUserId = '', action, targetQueueId = '', reason = '' }) => {
   const tenantId = auth.tenantId;
   const actorUserId = text(auth.userId);
@@ -71,7 +82,7 @@ const mutateAssignment = async ({ auth, conversationId, targetUserId = '', actio
     `, [tenantId, conversationId])).rows[0];
     if (!conversation) throw error('Conversa nao encontrada.', 404);
     const access = getChatAccessFilter(auth);
-    const hasQueueAccess = privileged || access.queueIds.includes(text(conversation.queue_id)) || conversation.assigned_agent_id === actorUserId;
+    const hasQueueAccess = privileged || hasConversationQueueAccess(access, conversation, actorUserId);
     if (!hasQueueAccess) throw error('Voce nao possui acesso a esta conversa.', 403);
     if (conversation.assignment_status === 'closed' || conversation.status === 'closed') {
       throw error('Conversa encerrada nao pode ser redistribuida.', 409);
@@ -103,7 +114,8 @@ const mutateAssignment = async ({ auth, conversationId, targetUserId = '', actio
       if (queueId) {
         const targetQueue = (await client.query(`SELECT * FROM support_queues WHERE tenant_id=$1 AND id=$2 AND is_active=true`, [tenantId, queueId])).rows[0];
         if (!targetQueue) throw error('Fila de destino nao encontrada ou inativa.', 404);
-        if (!privileged && !access.queueIds.includes(queueId) && !access.queueIds.includes(text(targetQueue.service_id))) {
+        const allowedIds = access.queueOrServiceIds || access.queueIds || [];
+        if (!privileged && !allowedIds.includes(queueId) && !allowedIds.includes(text(targetQueue.service_id))) {
           throw error('Voce nao possui acesso a fila de destino.', 403);
         }
       }

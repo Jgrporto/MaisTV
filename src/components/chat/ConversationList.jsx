@@ -44,6 +44,7 @@ import { assignConversationToUser, requeueConversationForService } from '@/lib/c
 import { resolveConversationAssignmentStatus } from '@/lib/conversation-assignment-status';
 import { conversationMatchesQueueServiceFilter } from '@/lib/attendance-buckets';
 import { buildLabelSummary, conversationHasLabel, toggleConversationCustomLabel } from '@/lib/labels';
+import { isAdminLikeUser } from '@/lib/navigation-permissions';
 import { cn } from '@/lib/utils';
 import ContactAvatar from './ContactAvatar';
 
@@ -220,19 +221,13 @@ export default function ConversationList({
   const [selectedPauseReason, setSelectedPauseReason] = useState(PAUSE_REASON_OPTIONS[0].value);
   const currentUserId = String(currentUser?.id || currentUser?.email || 'local-user');
   const currentUserName = String(currentUser?.full_name || currentUser?.name || 'Operador local');
-  const isAdminUser =
-    String(currentUser?.role || '').trim().toLowerCase() === 'admin' ||
-    String(currentUser?.role_name || '').trim().toLowerCase() === 'administrador';
+  const isAdminUser = isAdminLikeUser(currentUser);
   const visibleTabs = isAdminUser
     ? TABS
     : TABS.filter((tab) => tab.value !== 'resolved');
   const nonAdminUsers = useMemo(
     () =>
-      (Array.isArray(teamUsers) ? teamUsers : []).filter((user) => {
-        const role = String(user?.role || '').trim().toLowerCase();
-        const roleName = String(user?.role_name || '').trim().toLowerCase();
-        return role !== 'admin' && roleName !== 'administrador';
-      }),
+      (Array.isArray(teamUsers) ? teamUsers : []).filter((user) => !isAdminLikeUser(user)),
     [teamUsers]
   );
   const activeUserIds = useMemo(

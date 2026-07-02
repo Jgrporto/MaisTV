@@ -9,10 +9,7 @@ export const DEFAULT_LOCAL_ADMIN_USER = {
 
 export const resolveEffectiveUser = (user) => {
   if (user && (user.id || user.email || user.full_name)) {
-    return {
-      ...DEFAULT_LOCAL_ADMIN_USER,
-      ...user,
-    };
+    return { ...user };
   }
 
   return null;

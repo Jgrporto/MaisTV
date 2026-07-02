@@ -55,9 +55,9 @@ const normalizeRoleName = (value) =>
 export const isAdminLikeUser = (user) => {
   const role = normalizeRoleName(user?.role);
   const roleName = normalizeRoleName(user?.role_name || user?.roleName);
-  const department = normalizeRoleName(user?.department_key || user?.departmentKey);
+  const roleId = normalizeRoleName(user?.role_id || user?.roleId);
 
-  return role === 'admin' || role === 'administrador' || roleName === 'admin' || roleName === 'administrador' || department === 'administracao';
+  return role === 'admin' || roleName === 'admin' || roleName === 'administrador' || roleId === 'admin';
 };
 export const normalizeNavigationPermissions = (permissions = {}, fallback = DEFAULT_NAVIGATION_PERMISSIONS) => {
   const source = permissions && typeof permissions === 'object' ? permissions : {};

@@ -2633,7 +2633,7 @@ const normalizeUserRecord = (user = {}, index = 0, fallbackCreatedAt = nowIso())
     id: String(user.id || `user-${index + 1}`),
     full_name: String(user.full_name || user.name || '').trim(),
     email: String(user.email || (username ? `${toSlug(username)}@saastv.local` : '')).trim().toLowerCase(),
-    role: normalizedRole || 'admin',
+    role: normalizedRole,
     role_id: String(user.role_id || '').trim() || (inferredAdminUser ? 'role-admin' : ''),
     role_name: normalizedRoleName,
     username,
@@ -4643,8 +4643,8 @@ const isAdminUser = (store, user) => {
     user &&
       (String(user.role || '').trim().toLowerCase() === 'admin' ||
         String(user.role_name || '').trim().toLowerCase() === 'administrador' ||
-        String(role?.name || '').trim().toLowerCase() === 'administrador' ||
-        String(role?.department_key || '').trim().toLowerCase() === 'administracao')
+        String(user.role_id || '').trim().toLowerCase() === 'admin' ||
+        String(role?.name || '').trim().toLowerCase() === 'administrador')
   );
 };
 

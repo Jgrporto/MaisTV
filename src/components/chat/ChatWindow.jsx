@@ -78,6 +78,7 @@ import VirtualizedMessageThread from '@/features/chat/components/VirtualizedMess
 import { ENABLE_CHAT_VIRTUALIZATION, ENABLE_NEW_CHAT_DATA_LAYER, MESSAGE_PAGE_LIMIT } from '@/lib/performance-config';
 import { useChatStore } from '@/features/chat/store/useChatStore';
 import { flattenMessagePages, useMessages } from '@/features/chat/hooks/useMessages';
+import { isAdminLikeUser } from '@/lib/navigation-permissions';
 import { markConversationReadCaches } from '@/features/chat/cache-updaters';
 import { resolveConversationReplyRouteSelector } from '@/lib/conversation-channel';
 
@@ -1009,9 +1010,7 @@ export default function ChatWindow({
   const paginatedHasMoreRef = useRef(true);
   const currentUserId = String(currentUser?.id || currentUser?.email || '').trim();
   const currentUserName = String(currentUser?.full_name || currentUser?.name || currentUser?.username || 'Agente').trim();
-  const isCurrentUserAdmin =
-    String(currentUser?.role || '').trim().toLowerCase() === 'admin' ||
-    String(currentUser?.role_name || '').trim().toLowerCase() === 'administrador';
+  const isCurrentUserAdmin = isAdminLikeUser(currentUser);
   const [testClock, setTestClock] = useState(() => Date.now());
   const assignmentStatus = useMemo(
     () =>
@@ -1108,13 +1107,10 @@ export default function ChatWindow({
       matchingServiceIds.includes(String(service?.id || ''))
     );
     const activeNonAdminUsers = (Array.isArray(activeUsers) ? activeUsers : []).filter((user) => {
-      const role = String(user?.role || '').trim().toLowerCase();
-      const roleName = String(user?.role_name || '').trim().toLowerCase();
       const userId = String(user?.id || '').trim();
       const userEmail = String(user?.email || '').trim().toLowerCase();
       return (
-        role !== 'admin' &&
-        roleName !== 'administrador' &&
+        !isAdminLikeUser(user) &&
         (!currentAssignedId || userId !== currentAssignedId) &&
         (!currentAssignedEmail || userEmail !== currentAssignedEmail)
       );

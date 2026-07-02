@@ -50,6 +50,7 @@ import {
   SERVICES_REFRESH_INTERVAL_MS,
 } from '@/lib/performance-config';
 import { fetchLocalUsers } from '@/lib/users-api';
+import { isAdminLikeUser } from '@/lib/navigation-permissions';
 import { fetchWhatsappConversationDetail } from '@/lib/whatsapp-api';
 import { useConversationSummaries, useConversations } from '@/features/chat/hooks/useConversations';
 import { useChatEvents } from '@/features/chat/hooks/useChatEvents';
@@ -94,11 +95,7 @@ const getPauseRemainingMs = (pausedUntil) => {
   return Number.isFinite(pausedUntilMs) ? Math.max(0, pausedUntilMs - Date.now()) : 0;
 };
 
-const isAdminUser = (user) => {
-  const role = normalizeUserKey(user?.role);
-  const roleName = normalizeUserKey(user?.role_name);
-  return role === 'admin' || roleName === 'administrador';
-};
+const isAdminUser = isAdminLikeUser;
 
 const isConversationAssignedToUser = (conversation, user) => {
   const userIds = [

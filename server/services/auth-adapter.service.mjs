@@ -1,5 +1,11 @@
 const authError = (message, statusCode = 401) => Object.assign(new Error(message), { statusCode });
 
+const uniqueStrings = (values = []) => Array.from(new Set(
+  (Array.isArray(values) ? values : [values])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean),
+));
+
 export const createLegacyAuthResolver = ({ authMeUrl = process.env.LEGACY_AUTH_ME_URL || 'http://127.0.0.1:5053/api/local/auth/me' } = {}) => async (req) => {
   const cookie = String(req.headers.cookie || '');
   if (!cookie.includes('saastv_session=')) throw authError('Authentication required.');
@@ -14,13 +20,18 @@ export const createLegacyAuthResolver = ({ authMeUrl = process.env.LEGACY_AUTH_M
   const payload = await response.json();
   const user = payload.user || payload.session?.user || payload;
   if (!user?.id && !user?.email) throw authError('Legacy authentication returned no user identity.', 503);
+  const rawQueueIds = uniqueStrings(user.queue_ids || user.queueIds || []);
+  const rawServiceIds = uniqueStrings(user.service_ids || user.serviceIds || []);
+  const queueIds = uniqueStrings([...rawQueueIds, ...rawServiceIds]);
+  const serviceIds = rawServiceIds;
   return {
     userId: String(user.id || user.email),
     tenantId: String(user.tenant_id || user.tenantId || process.env.CHAT_DEFAULT_TENANT_ID || ''),
-    queueIds: Array.isArray(user.queue_ids || user.queueIds) ? (user.queue_ids || user.queueIds).map(String) : [],
+    queueIds,
+    serviceIds,
     roles: Array.isArray(user.roles)
       ? user.roles.map(String)
-      : [user.role,user.role_name,user.roleName].map((value)=>String(value||'').trim()).filter(Boolean),
+      : [user.role,user.role_name,user.roleName,user.role_id,user.roleId].map((value)=>String(value||'').trim()).filter(Boolean),
     raw: user,
   };
 };

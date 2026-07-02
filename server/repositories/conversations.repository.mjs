@@ -3,10 +3,10 @@ export const listConversations = async ({ tenantId, status, limit, cursor, acces
   const values = [tenantId];
   const where = ['c.tenant_id=$1'];
   if (access && !access.privileged) {
-    values.push(access.userId || '', access.queueIds || []);
+    values.push(access.userId || '', access.queueOrServiceIds || access.queueIds || []);
     const userParam = `$${values.length - 1}`;
-    const queueParam = `$${values.length}`;
-    where.push(`(c.assigned_agent_id=${userParam} OR c.queue_id=ANY(${queueParam}::text[]) OR c.service_id=ANY(${queueParam}::text[]))`);
+    const accessParam = `$${values.length}`;
+    where.push(`(c.assigned_agent_id=${userParam} OR c.queue_id=ANY(${accessParam}::text[]) OR c.service_id=ANY(${accessParam}::text[]))`);
   }
   if (status) { values.push(status); where.push(`c.status=$${values.length}`); }
   if (cursor) { values.push(cursor.at, cursor.id); where.push(`(COALESCE(c.last_message_at,c.created_at),c.id) < ($${values.length - 1}::timestamptz,$${values.length}::uuid)`); }
@@ -27,7 +27,7 @@ export const getConversation = async (tenantId, id, access = null) => {
   const values = [tenantId, id];
   let accessSql = '';
   if (access && !access.privileged) {
-    values.push(access.userId || '', access.queueIds || []);
+    values.push(access.userId || '', access.queueOrServiceIds || access.queueIds || []);
     accessSql = ' AND (assigned_agent_id=$3 OR queue_id=ANY($4::text[]) OR service_id=ANY($4::text[]))';
   }
   return (await query(`SELECT * FROM conversations WHERE tenant_id=$1 AND id=$2${accessSql}`, values)).rows[0] || null;
@@ -43,15 +43,18 @@ export const upsertInboundConversation = async (client, data) => (await client.q
   ON CONFLICT (tenant_id,normalized_phone) WHERE normalized_phone IS NOT NULL DO UPDATE SET
   contact_phone=EXCLUDED.contact_phone,
   contact_name=COALESCE(NULLIF(EXCLUDED.contact_name,''),conversations.contact_name),
-  queue_id=EXCLUDED.queue_id,service_id=EXCLUDED.service_id,
+  queue_id=CASE WHEN EXCLUDED.last_customer_message_at>=COALESCE(conversations.last_customer_message_at,'-infinity'::timestamptz) THEN EXCLUDED.queue_id ELSE conversations.queue_id END,
+  service_id=CASE WHEN EXCLUDED.last_customer_message_at>=COALESCE(conversations.last_customer_message_at,'-infinity'::timestamptz) THEN EXCLUDED.service_id ELSE conversations.service_id END,
   assigned_agent_id=COALESCE(conversations.assigned_agent_id,EXCLUDED.assigned_agent_id),
   assignment_status=CASE
     WHEN conversations.status='closed' OR conversations.assignment_status='closed' THEN 'closed'
     WHEN conversations.assigned_agent_id IS NOT NULL THEN conversations.assignment_status
-    WHEN COALESCE(conversations.queue_id,EXCLUDED.queue_id) IS NOT NULL THEN 'queued'
+    WHEN (CASE WHEN EXCLUDED.last_customer_message_at>=COALESCE(conversations.last_customer_message_at,'-infinity'::timestamptz) THEN EXCLUDED.queue_id ELSE conversations.queue_id END) IS NOT NULL THEN 'queued'
     ELSE 'unassigned' END,
-  route_key=EXCLUDED.route_key,phone_number_id=EXCLUDED.phone_number_id,
-  last_inbound_route_key=EXCLUDED.last_inbound_route_key,last_inbound_phone_number_id=EXCLUDED.last_inbound_phone_number_id,
+  route_key=CASE WHEN EXCLUDED.last_customer_message_at>=COALESCE(conversations.last_customer_message_at,'-infinity'::timestamptz) THEN EXCLUDED.route_key ELSE conversations.route_key END,
+  phone_number_id=CASE WHEN EXCLUDED.last_customer_message_at>=COALESCE(conversations.last_customer_message_at,'-infinity'::timestamptz) THEN EXCLUDED.phone_number_id ELSE conversations.phone_number_id END,
+  last_inbound_route_key=CASE WHEN EXCLUDED.last_customer_message_at>=COALESCE(conversations.last_customer_message_at,'-infinity'::timestamptz) THEN EXCLUDED.last_inbound_route_key ELSE conversations.last_inbound_route_key END,
+  last_inbound_phone_number_id=CASE WHEN EXCLUDED.last_customer_message_at>=COALESCE(conversations.last_customer_message_at,'-infinity'::timestamptz) THEN EXCLUDED.last_inbound_phone_number_id ELSE conversations.last_inbound_phone_number_id END,
   last_customer_message_at=GREATEST(COALESCE(conversations.last_customer_message_at,EXCLUDED.last_customer_message_at),EXCLUDED.last_customer_message_at),
   last_24h_window_expires_at=GREATEST(COALESCE(conversations.last_24h_window_expires_at,EXCLUDED.last_24h_window_expires_at),EXCLUDED.last_24h_window_expires_at),
   standard_label=EXCLUDED.standard_label,standard_label_source=EXCLUDED.standard_label_source,
@@ -61,7 +64,7 @@ export const upsertInboundConversation = async (client, data) => (await client.q
     SELECT COALESCE(jsonb_agg(account),'[]'::jsonb)
     FROM (SELECT DISTINCT account FROM jsonb_array_elements(conversations.source_accounts_json || EXCLUDED.source_accounts_json) AS items(account)) unique_accounts
   ) END,
-  active_route_selector_json=COALESCE(EXCLUDED.active_route_selector_json,conversations.active_route_selector_json),
+  active_route_selector_json=CASE WHEN EXCLUDED.last_customer_message_at>=COALESCE(conversations.last_customer_message_at,'-infinity'::timestamptz) THEN COALESCE(EXCLUDED.active_route_selector_json,conversations.active_route_selector_json) ELSE conversations.active_route_selector_json END,
   default_route_selector_json=COALESCE(conversations.default_route_selector_json,EXCLUDED.default_route_selector_json),updated_at=now() RETURNING *`,
   [data.tenantId,data.contactPhone,data.normalizedPhone,data.contactName||null,data.body||null,data.type,data.createdAt,
     data.queueId||null,data.serviceId||data.queueId||null,data.assignedAgentId||null,data.routeKey||null,data.phoneNumberId||null,
