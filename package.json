@@ -39,7 +39,7 @@
     "media:failed:reprocess": "node scripts/reprocess-failed-media-jobs.mjs --confirm",
     "chatbot:dry-run": "node scripts/chatbot-dry-run.mjs",
     "chatbot:sequence:test": "node --test server/services/chatbot-sequencing.test.mjs",
-    "channels:test": "node --test server/services/unified-channel-model.test.mjs",
+    "channels:test": "node --test server/services/unified-channel-model.test.mjs server/routes/body-parser-scope.test.mjs",
     "chatbot:sequence:report": "node scripts/chatbot-sequence-report.mjs",
     "assignment:route:configure": "node scripts/configure-assignment-route.mjs",
     "assignment:report": "node scripts/assignment-report.mjs",

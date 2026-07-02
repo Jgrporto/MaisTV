@@ -9,12 +9,12 @@ export const createQueueConfigRouter = async ({ authMiddleware } = {}) => {
   const { default: express } = await import('express');
   const router = express.Router();
   if (authMiddleware) router.use(authMiddleware);
-  router.use(express.json({ limit: '64kb' }));
+  const parseJson = express.json({ limit: '64kb' });
   router.get('/queues', asyncRoute(async (req, res) => res.json(await listQueues({ auth: req.chatAuth }))));
-  router.post('/queues', requireAdmin, asyncRoute(async (req, res) => res.status(201).json(await saveQueue({ auth: req.chatAuth, input: req.body }))));
-  router.put('/queues/:queueId', requireAdmin, asyncRoute(async (req, res) => res.json(await saveQueue({ auth: req.chatAuth, queueId: req.params.queueId, input: req.body }))));
+  router.post('/queues', parseJson, requireAdmin, asyncRoute(async (req, res) => res.status(201).json(await saveQueue({ auth: req.chatAuth, input: req.body }))));
+  router.put('/queues/:queueId', parseJson, requireAdmin, asyncRoute(async (req, res) => res.json(await saveQueue({ auth: req.chatAuth, queueId: req.params.queueId, input: req.body }))));
   router.delete('/queues/:queueId', requireAdmin, asyncRoute(async (req, res) => res.json(await removeQueue({ auth: req.chatAuth, queueId: req.params.queueId }))));
-  router.put('/customer-profiles/:phone/standard-label', requireAdmin, asyncRoute(async (req, res) => {
+  router.put('/customer-profiles/:phone/standard-label', parseJson, requireAdmin, asyncRoute(async (req, res) => {
     const result = await overrideStandardLabel({
       tenantId: req.chatAuth.tenantId,
       phone: req.params.phone,
