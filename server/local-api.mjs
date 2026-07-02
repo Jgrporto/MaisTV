@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import express from 'express';
-import { readJsonBackedStore, writeJsonBackedStore } from './sql-store.js';
+import { clearSqlStoreCache, readJsonBackedStore, writeJsonBackedStore } from './sql-store.js';
 import {
   isWhatsappSqliteStoreEnabled,
   listWhatsappSqliteConversations,
@@ -3456,23 +3456,30 @@ const seedStore = () => {
 
 const cloneStoreSnapshot = (store) => structuredClone(normalizeStore(store));
 
-const ensureStore = async () => {
+const readStoreFromBackingStore = async ({ refreshSqlCache = false } = {}) => {
   await fs.mkdir(DATA_DIR, { recursive: true });
-  if (!storeCache) {
-    const readFromJsonFile = async () => {
-      try {
-        const raw = await fs.readFile(STORE_PATH, 'utf8');
-        return JSON.parse(raw);
-      } catch (error) {
-        if (error?.code === 'ENOENT') {
-          return seedStore();
-        }
-        throw error;
+  if (refreshSqlCache) {
+    clearSqlStoreCache('main_store');
+  }
+  const readFromJsonFile = async () => {
+    try {
+      const raw = await fs.readFile(STORE_PATH, 'utf8');
+      return JSON.parse(raw);
+    } catch (error) {
+      if (error?.code === 'ENOENT') {
+        return seedStore();
       }
-    };
-    storeCache = normalizeStore(
-      await readJsonBackedStore(STORE_PATH, seedStore(), readFromJsonFile),
-    );
+      throw error;
+    }
+  };
+  return normalizeStore(
+    await readJsonBackedStore(STORE_PATH, seedStore(), readFromJsonFile),
+  );
+};
+
+const ensureStore = async () => {
+  if (!storeCache) {
+    storeCache = await readStoreFromBackingStore();
   }
 };
 
@@ -4277,7 +4284,8 @@ const clearWhatsappConversationAssignment = async (conversationIds = []) => {
 
 const updateStore = async (mutate) => {
   const operation = storeWriteQueue.then(async () => {
-    const current = await readStore();
+    const current = await readStoreFromBackingStore({ refreshSqlCache: true });
+    storeCache = current;
     const workingCopy = cloneStoreSnapshot(current);
     const mutationResult = await mutate(workingCopy);
     if (mutationResult === false) {
