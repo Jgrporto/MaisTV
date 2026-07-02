@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import express from 'express';
+import { query as queryPostgres } from './db/postgres.mjs';
 import { clearSqlStoreCache, readJsonBackedStore, writeJsonBackedStore } from './sql-store.js';
 import {
   isWhatsappSqliteStoreEnabled,
@@ -2450,6 +2451,7 @@ const ROLE_PERMISSION_KEYS = [
   'attendance',
   'bulkSend',
   'queuesServices',
+  'tickets',
   'quickReplies',
   'customerBase',
   'labels',
@@ -4635,35 +4637,115 @@ const findUserRole = (store, user) =>
       String(role?.name || '').trim() === String(user?.role_name || user?.role || '').trim(),
   ) || null;
 
+const normalizeAdminMarker = (value) =>
+  String(value || '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+const isAdministratorRole = (role = {}) =>
+  normalizeAdminMarker(role?.id) === 'role-admin' ||
+  normalizeAdminMarker(role?.name) === 'administrador' ||
+  normalizeAdminMarker(role?.department_key || role?.departmentKey) === 'administracao';
+
+const isExplicitAdminUser = (store, user) => {
+  if (!user) return false;
+  const role = findUserRole(store, user);
+  return (
+    normalizeAdminMarker(user.role) === 'admin' ||
+    normalizeAdminMarker(user.role_name || user.roleName) === 'administrador' ||
+    normalizeAdminMarker(user.role_id || user.roleId) === 'role-admin' ||
+    isAdministratorRole(role)
+  );
+};
+
+const userMatchesRoleRecord = (user = {}, role = {}) => {
+  const roleId = String(role?.id || '').trim();
+  const roleName = String(role?.name || '').trim();
+  return Boolean(
+    (roleId && String(user?.role_id || user?.roleId || '').trim() === roleId) ||
+      (roleName && String(user?.role_name || user?.roleName || user?.role || '').trim() === roleName),
+  );
+};
+
+const getUserIdsForRoles = (store = {}, roles = []) => {
+  const roleRecords = (Array.isArray(roles) ? roles : []).filter(Boolean);
+  if (!roleRecords.length) return [];
+  return Array.from(new Set(
+    (Array.isArray(store?.users) ? store.users : [])
+      .filter((user) => roleRecords.some((role) => userMatchesRoleRecord(user, role)))
+      .map((user) => String(user?.id || '').trim())
+      .filter(Boolean),
+  ));
+};
+
 const canManageTeamSessions = (store, user) => {
   const role = findUserRole(store, user);
   return Boolean(
     user &&
-      (String(user.role || '').trim().toLowerCase() === 'admin' ||
-        String(user.role_name || '').trim().toLowerCase() === 'administrador' ||
-        role?.permissions?.settings),
+      (isExplicitAdminUser(store, user) || role?.permissions?.settings),
   );
 };
 
 const isAdminUser = (store, user) => {
-  const role = findUserRole(store, user);
-  return Boolean(
-    user &&
-      (String(user.role || '').trim().toLowerCase() === 'admin' ||
-        String(user.role_name || '').trim().toLowerCase() === 'administrador' ||
-        String(user.role_id || '').trim().toLowerCase() === 'admin' ||
-        String(role?.name || '').trim().toLowerCase() === 'administrador')
-  );
+  return isExplicitAdminUser(store, user);
 };
 
+const resolvePostgresQueueAccessForUser = async ({ tenantId, userId }) => {
+  const safeTenantId = String(tenantId || '').trim();
+  const safeUserId = String(userId || '').trim();
+  if (!safeTenantId || !safeUserId) {
+    return null;
+  }
 
-const sanitizeAuthenticatedUserForClient = (store, user = {}) => {
+  try {
+    const result = await queryPostgres(
+      `
+        SELECT DISTINCT m.queue_id,q.service_id
+        FROM queue_memberships m
+        JOIN support_queues q ON q.tenant_id=m.tenant_id AND q.id=m.queue_id
+        WHERE m.tenant_id=$1 AND m.user_id=$2
+          AND m.is_active=true AND q.is_active=true
+        ORDER BY m.queue_id
+      `,
+      [safeTenantId, safeUserId],
+    );
+    const queueIds = Array.from(new Set(result.rows.map((row) => String(row.queue_id || '').trim()).filter(Boolean)));
+    const serviceIds = Array.from(new Set(result.rows.map((row) => String(row.service_id || '').trim()).filter(Boolean)));
+    return { queueIds, serviceIds, source: 'postgres' };
+  } catch (error) {
+    log(`Falha ao consultar queue_memberships para auth/me; usando fallback legado: ${error?.message || error}`);
+    return null;
+  }
+};
+
+const resolveUserQueueAccess = async (store = {}, user = {}) => {
+  const legacyServiceIds = getUserServiceIds(store, user);
+  const tenantId = String(user?.tenant_id || user?.tenantId || process.env.CHAT_DEFAULT_TENANT_ID || '').trim();
+  const postgresAccess = await resolvePostgresQueueAccessForUser({ tenantId, userId: user?.id });
+  if (postgresAccess) {
+    return {
+      queueIds: postgresAccess.queueIds,
+      serviceIds: postgresAccess.serviceIds,
+      source: 'postgres',
+    };
+  }
+  return {
+    queueIds: legacyServiceIds,
+    serviceIds: legacyServiceIds,
+    source: 'legacy',
+  };
+};
+
+const sanitizeAuthenticatedUserForClient = async (store, user = {}) => {
   const role = findUserRole(store, user);
   const admin = isAdminUser(store, user);
   const permissions = admin
     ? { ...ADMIN_ROLE_PERMISSIONS }
     : normalizeRolePermissions(role?.permissions, DEFAULT_ROLE_PERMISSIONS);
   const settingsAccess = role?.settings_access || role?.settingsAccess || null;
+  const queueAccess = await resolveUserQueueAccess(store, user);
 
   return {
     ...sanitizeUserForClient(user),
@@ -4673,8 +4755,8 @@ const sanitizeAuthenticatedUserForClient = (store, user = {}) => {
     role_permissions: permissions,
     permissions,
     settings_access: settingsAccess,
-    service_ids: getUserServiceIds(store, user),
-    queue_ids: getUserServiceIds(store, user),
+    service_ids: queueAccess.serviceIds,
+    queue_ids: queueAccess.queueIds,
   };
 };
 
@@ -5187,20 +5269,29 @@ let chatArchitectureAppPromise = null;
 const resolveChatArchitectureSession = async (req) => {
   const authContext = await requireAuthenticatedSession(req);
   const user = authContext.user || {};
+  const role = findUserRole(authContext.store, user);
+  const queueAccess = await resolveUserQueueAccess(authContext.store, user);
+  const useLegacyUserQueueFields = queueAccess.source !== 'postgres';
   const queueIds = [
-    ...getUserServiceIds(authContext.store, user),
-    ...(Array.isArray(user.queue_ids) ? user.queue_ids : []),
-    ...(Array.isArray(user.queueIds) ? user.queueIds : []),
-    ...(Array.isArray(user.service_ids) ? user.service_ids : []),
-    ...(Array.isArray(user.serviceIds) ? user.serviceIds : []),
+    ...queueAccess.queueIds,
+    ...(useLegacyUserQueueFields && Array.isArray(user.queue_ids) ? user.queue_ids : []),
+    ...(useLegacyUserQueueFields && Array.isArray(user.queueIds) ? user.queueIds : []),
+  ];
+  const serviceIds = [
+    ...queueAccess.serviceIds,
+    ...(useLegacyUserQueueFields && Array.isArray(user.service_ids) ? user.service_ids : []),
+    ...(useLegacyUserQueueFields && Array.isArray(user.serviceIds) ? user.serviceIds : []),
   ];
 
   return {
     userId: String(user.id || user.email || '').trim(),
     tenantId: String(user.tenant_id || user.tenantId || process.env.CHAT_DEFAULT_TENANT_ID || '').trim(),
     queueIds: Array.from(new Set(queueIds.map((value) => String(value || '').trim()).filter(Boolean))),
-    roles: [user.role, user.role_name].map((value) => String(value || '').trim()).filter(Boolean),
-    raw: user,
+    serviceIds: Array.from(new Set(serviceIds.map((value) => String(value || '').trim()).filter(Boolean))),
+    roles: [user.role, user.role_name, user.role_id, role?.id, role?.name, role?.department_key]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean),
+    raw: { ...user, department_key: role?.department_key || user.department_key || user.departmentKey || '' },
   };
 };
 
@@ -10138,7 +10229,7 @@ const server = http.createServer(async (req, res) => {
         200,
         {
           ok: true,
-          user: sanitizeAuthenticatedUserForClient(store, matchedUser),
+          user: await sanitizeAuthenticatedUserForClient(store, matchedUser),
           session: {
             remember,
             expiresAt: record.expires_at,
@@ -10192,7 +10283,7 @@ const server = http.createServer(async (req, res) => {
               log(`Falha ao atualizar presenca do atendimento: ${error?.message || error}`);
             });
         }
-        return sendJson(res, 200, sanitizeAuthenticatedUserForClient(authContext.store, authContext.user));
+        return sendJson(res, 200, await sanitizeAuthenticatedUserForClient(authContext.store, authContext.user));
       }
 
       const authContext = await requireAuthenticatedSession(req);
@@ -11839,13 +11930,14 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'PUT') {
         const payload = await readBody(req);
         let updatedItem = null;
-        let passwordChanged = false;
         let nextConversationPreferenceItems = null;
+        const sessionUserIdsToInvalidate = new Set();
 
         const store = await updateStore((current) => {
           const items = Array.isArray(current[collectionName]) ? current[collectionName] : [];
           const index = findEntityItemIndex(items, entityName, itemId, payload || {});
           if (index < 0) return current;
+          const previousItem = items[index];
 
           if (entityName === 'ConversationPreference') {
             const result = upsertConversationPreferenceInItems(items, payload || {}, {
@@ -11885,16 +11977,21 @@ const server = http.createServer(async (req, res) => {
                   )
               : mergeEntity(items[index], payload || {});
           }
-          passwordChanged = entityName === 'User' && Boolean(String(payload?.password || '').trim());
           if (entityName === 'ConversationPreference') {
             current[collectionName] = nextConversationPreferenceItems || items;
           } else {
             items[index] = updatedItem;
             current[collectionName] = items;
           }
-          if (passwordChanged) {
+          if (entityName === 'User' && updatedItem?.id) {
+            sessionUserIdsToInvalidate.add(String(updatedItem.id));
+          }
+          if (entityName === 'Role') {
+            getUserIdsForRoles(current, [previousItem, updatedItem]).forEach((userId) => sessionUserIdsToInvalidate.add(userId));
+          }
+          if (sessionUserIdsToInvalidate.size > 0) {
             current.auth = pruneAuthState(current.auth);
-            current.auth.sessions = current.auth.sessions.filter((session) => session.user_id !== String(updatedItem?.id || ''));
+            current.auth.sessions = current.auth.sessions.filter((session) => !sessionUserIdsToInvalidate.has(String(session.user_id || '')));
           }
           return current;
         });
@@ -11903,8 +12000,8 @@ const server = http.createServer(async (req, res) => {
           return sendJson(res, 404, { error: 'Item not found' });
         }
 
-        if (passwordChanged && updatedItem?.id) {
-          deleteSqlAuthSessionsByUserId(updatedItem.id);
+        for (const affectedUserId of sessionUserIdsToInvalidate) {
+          deleteSqlAuthSessionsByUserId(affectedUserId);
         }
 
         if (entityName === 'ConversationPreference') {
@@ -11925,20 +12022,35 @@ const server = http.createServer(async (req, res) => {
         const items = Array.isArray(store[collectionName]) ? store[collectionName] : [];
         const index = items.findIndex((item) => String(item?.id) === String(itemId));
         if (index < 0) return sendJson(res, 404, { error: 'Item not found' });
+        const itemToDelete = items[index];
+        const sessionUserIdsToInvalidate = new Set(
+          entityName === 'User'
+            ? [String(itemId)]
+            : entityName === 'Role'
+              ? getUserIdsForRoles(store, [itemToDelete])
+              : [],
+        );
 
         await updateStore((current) => {
           current[collectionName] = (Array.isArray(current[collectionName]) ? current[collectionName] : []).filter(
             (item) => String(item?.id) !== String(itemId),
           );
-          if (entityName === 'User') {
+          if (sessionUserIdsToInvalidate.size > 0) {
             current.auth = pruneAuthState(current.auth);
-            current.auth.sessions = current.auth.sessions.filter((session) => session.user_id !== String(itemId));
+            current.auth.sessions = current.auth.sessions.filter((session) => !sessionUserIdsToInvalidate.has(String(session.user_id || '')));
           }
           return current;
         });
 
+        for (const affectedUserId of sessionUserIdsToInvalidate) {
+          deleteSqlAuthSessionsByUserId(affectedUserId);
+        }
+
         if (entityName === 'User') {
-          deleteSqlAuthSessionsByUserId(itemId);
+          queryPostgres(
+            'UPDATE queue_memberships SET is_active=false,updated_at=now() WHERE user_id=$1 AND is_active=true',
+            [String(itemId)],
+          ).catch((error) => log(`Falha ao desativar queue_memberships do usuario removido: ${error?.message || error}`));
         }
 
         return sendJson(res, 200, { ok: true });

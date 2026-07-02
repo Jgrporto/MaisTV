@@ -18,10 +18,14 @@ test('authenticated users do not inherit the local admin fallback', () => {
 });
 
 test('chat admin detection only accepts explicit admin markers', () => {
-  assert.equal(isPrivilegedChatUser({ roles: ['Suporte'], raw: { role_id: 'role-admin' } }), false);
+  assert.equal(isPrivilegedChatUser({ roles: ['Suporte'], raw: { role_id: 'admin' } }), false);
   assert.equal(isPrivilegedChatUser({ roles: [], raw: { role: 'admin' } }), true);
   assert.equal(isPrivilegedChatUser({ roles: [], raw: { role_name: 'Administrador' } }), true);
-  assert.equal(isPrivilegedChatUser({ roles: [], raw: { role_id: 'admin' } }), true);
+  assert.equal(isPrivilegedChatUser({ roles: [], raw: { role_id: 'role-admin' } }), true);
+  assert.equal(isPrivilegedChatUser({ roles: [], raw: { department_key: 'administracao' } }), true);
+  assert.equal(isAdminLikeUser({ role_id: 'admin' }), false);
+  assert.equal(isAdminLikeUser({ role_id: 'role-admin' }), true);
+  assert.equal(isAdminLikeUser({ department_key: 'administracao' }), true);
 });
 
 test('non-admin attendant can access conversations by assigned agent, queue or service', () => {

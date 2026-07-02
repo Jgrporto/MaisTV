@@ -65,6 +65,7 @@ import { fetchLocalHsms, uploadHsmMedia } from '@/lib/hsm-api';
 import {
   DEFAULT_NAVIGATION_PERMISSIONS,
   NAVIGATION_PERMISSION_OPTIONS,
+  canViewNavigationPermission,
   normalizeNavigationPermissions,
 } from '@/lib/navigation-permissions';
 import { deleteService, fetchServices, saveService } from '@/lib/services-api';
@@ -337,7 +338,7 @@ function SectionHeading({ icon: Icon, title, description, action }) {
 
 export default function Settings() {
   const { theme, setTheme } = useTheme();
-  const { effectiveUser } = useAuth();
+  const { effectiveUser, checkUserAuth } = useAuth();
   const queryClient = useQueryClient();
   const [user, setUser] = useState(effectiveUser);
   const [teamFilter, setTeamFilter] = useState('all');
@@ -667,10 +668,12 @@ export default function Settings() {
   const isUserReadOnly = userDialogMode === 'view';
   const isRoleReadOnly = roleDialogMode === 'view';
   const currentUserRole = useMemo(() => resolveRoleForUser(user, roles), [roles, user]);
-  const canOpenSettingsRoute =
-    String(user?.role || '').trim().toLowerCase() === 'admin' ||
-    String(user?.role_name || '').trim().toLowerCase() === 'administrador' ||
-    Boolean(currentUserRole?.permissions?.settings || user?.role_permissions?.settings || user?.permissions?.settings);
+  const canOpenSettingsRoute = canViewNavigationPermission({
+    ...user,
+    role_permissions: currentUserRole?.permissions || user?.role_permissions || user?.permissions,
+    settings_access: currentUserRole?.settings_access || currentUserRole?.settingsAccess || user?.settings_access || user?.settingsAccess,
+    department_key: currentUserRole?.department_key || user?.department_key || user?.departmentKey,
+  }, 'settings');
   const currentSettingsAccess = useMemo(() => {
     if (!canOpenSettingsRoute) {
       return HIDDEN_ROLE_SETTINGS_ACCESS;
@@ -757,7 +760,10 @@ export default function Settings() {
       queryClient.invalidateQueries({ queryKey: ['settings', 'roles'] }),
       queryClient.invalidateQueries({ queryKey: ['settings', 'services'] }),
       queryClient.invalidateQueries({ queryKey: ['settings', 'service-numbers'] }),
+      queryClient.invalidateQueries({ queryKey: ['chat'] }),
+      queryClient.invalidateQueries({ queryKey: ['attendance'] }),
     ]);
+    await checkUserAuth({ silent: true });
   };
 
   const openCreateUserDialog = () => {
