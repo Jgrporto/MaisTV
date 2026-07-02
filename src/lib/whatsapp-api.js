@@ -1263,6 +1263,7 @@ export const sendWhatsappVideoMessage = async ({
 };
 
 export const sendWhatsappInteractiveMessage = async ({
+  conversationId,
   to,
   text,
   buttonText = 'Selecionar',
@@ -1275,6 +1276,29 @@ export const sendWhatsappInteractiveMessage = async ({
   origin,
   routeSelector,
 }) => {
+  if (conversationId) {
+    const options = (buttons.length ? buttons : rows).map((option, index) => ({
+      id: String(option?.id || option?.value || `option-${index + 1}`),
+      title: String(option?.title || option?.label || option?.value || `Opcao ${index + 1}`),
+      description: String(option?.description || ''),
+    }));
+    return await requestChatJson('/api/messages/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversationId,
+        type: 'interactive',
+        body: text,
+        interactivePayload: {
+          text,
+          buttonText,
+          footer,
+          displayAs: buttons.length ? 'buttons' : 'list',
+          options,
+        },
+      }),
+    });
+  }
   return await requestWhatsappJson('/api/whatsapp/send-interactive', {
     method: 'POST',
     headers: {

@@ -17,59 +17,12 @@ import { resolveMetaConfig } from '../services/meta-config.service.mjs';
 import { getLogger } from '../services/logger.service.mjs';
 import { resolveOutboundChannel } from '../services/channel-routing.service.mjs';
 import { buildStoredMediaMessagePayload, uploadStoredMediaToMeta } from '../services/meta-outbound-media.service.mjs';
+import { buildInteractivePayload } from '../services/interactive-message.service.mjs';
 import {
   getChatbotOutboundPermission,
   handleChatbotOutboundFailed,
   handleChatbotOutboundSent,
 } from '../services/chatbot-sequence.service.mjs';
-
-const truncate = (value, max) => String(value || '').trim().slice(0, max);
-
-const buildInteractivePayload = (message) => {
-  const raw = message.raw_json && typeof message.raw_json === 'object' ? message.raw_json : {};
-  const output = raw.chatbotOutput && typeof raw.chatbotOutput === 'object' ? raw.chatbotOutput : raw;
-  const text = truncate(output.text || message.body || 'Selecione uma opcao:', 1024);
-  const options = Array.isArray(output.options) ? output.options : [];
-  const displayAs = String(output.displayAs || '').trim().toLowerCase();
-
-  if (displayAs !== 'list' && options.length <= 3) {
-    return {
-      type: 'interactive',
-      interactive: {
-        type: 'button',
-        body: { text },
-        action: {
-          buttons: options.slice(0, 3).map((option, index) => ({
-            type: 'reply',
-            reply: {
-              id: truncate(option.id || option.targetNodeId || `option-${index + 1}`, 256),
-              title: truncate(option.title || `Opcao ${index + 1}`, 20),
-            },
-          })),
-        },
-      },
-    };
-  }
-
-  return {
-    type: 'interactive',
-    interactive: {
-      type: 'list',
-      body: { text },
-      action: {
-        button: truncate(output.buttonText || 'MENU', 20),
-        sections: [{
-          title: truncate(output.sectionTitle || 'Opcoes', 24),
-          rows: options.slice(0, 10).map((option, index) => ({
-            id: truncate(option.id || option.targetNodeId || `option-${index + 1}`, 200),
-            title: truncate(option.title || `Opcao ${index + 1}`, 24),
-            description: truncate(option.description || '', 72) || undefined,
-          })),
-        }],
-      },
-    },
-  };
-};
 
 const buildMetaMessagePayload = ({ conversation, message, providerMediaId = '' }) => {
   if (['image', 'audio', 'video', 'document'].includes(message.type)) {

@@ -51394,7 +51394,13 @@ if (req.method === "GET" && url.pathname === "/api/painel/playlist") {
         agentName,
         senderName,
       } = payload;
-      const metaSelector = resolveRequestedMetaSelector(req, payload);
+      // Templates/HSM always use the official default channel. Free-text and
+      // media replies resolve from the last inbound channel elsewhere.
+      const metaSelector = {
+        routeKey: "default",
+        phoneNumberId: String(PHONE_NUMBER_ID || "").trim() || null,
+        displayPhoneNumber: String(WHATSAPP_DISPLAY_PHONE_NUMBER || "").trim() || null,
+      };
 
 
 

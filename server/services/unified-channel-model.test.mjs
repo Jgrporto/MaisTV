@@ -3,6 +3,7 @@ import test from 'node:test';
 import { buildPhoneLookupKeys, normalizePhone, phonesMatch } from '../utils/phone-normalization.mjs';
 import { classifyCustomerRows, STANDARD_LABELS } from './customer-profile.service.mjs';
 import { resolveOutboundChannel } from './channel-routing.service.mjs';
+import { buildInteractivePayload } from './interactive-message.service.mjs';
 import { resolveConversationReplyRouteSelector } from '../../src/lib/conversation-channel.js';
 import { decodeOutboundMediaInput } from './outbound-media.service.mjs';
 import { buildStoredMediaMessagePayload } from './meta-outbound-media.service.mjs';
@@ -56,6 +57,57 @@ test('closed window blocks free text and templates always use default', () => {
   assert.equal(resolveOutboundChannel({ conversation, now: Date.parse('2026-07-01T12:00:00.000Z') }).reason, 'customer_window_closed');
   assert.deepEqual(resolveOutboundChannel({ conversation, deliveryKind: 'template' }), {
     allowed: true, deliveryKind: 'template', routeKey: 'default', phoneNumberId: '', reason: 'template_uses_default',
+  });
+});
+
+test('default inbound channel is preserved for free text inside the customer window', () => {
+  assert.deepEqual(resolveOutboundChannel({
+    conversation: {
+      last_inbound_route_key: 'default',
+      last_inbound_phone_number_id: '779406741922236',
+      last_customer_message_at: '2026-07-01T12:00:00.000Z',
+    },
+    now: Date.parse('2026-07-02T11:59:59.000Z'),
+  }), {
+    allowed: true,
+    deliveryKind: 'free_text',
+    routeKey: 'default',
+    phoneNumberId: '779406741922236',
+    reason: 'last_inbound_channel',
+  });
+});
+
+test('fallback 24h window closes after last customer message plus 24 hours', () => {
+  const conversation = {
+    last_customer_message_at: '2026-07-01T12:00:00.000Z',
+    last_inbound_route_key: 'default',
+  };
+  assert.equal(resolveOutboundChannel({
+    conversation,
+    now: Date.parse('2026-07-02T12:00:00.000Z'),
+  }).allowed, true);
+  assert.equal(resolveOutboundChannel({
+    conversation,
+    now: Date.parse('2026-07-02T12:00:00.001Z'),
+  }).reason, 'customer_window_closed');
+});
+
+test('panel interactive quick reply keeps buttons and footer for Meta', () => {
+  assert.deepEqual(buildInteractivePayload({
+    body: 'Escolha:',
+    raw_json: { interactivePayload: {
+      text: 'Escolha:', footer: 'Atendimento MaisTV', displayAs: 'buttons',
+      options: [{ id: 'sales', title: 'Vendas' }, { id: 'support', title: 'Suporte' }],
+    } },
+  }), {
+    type: 'interactive',
+    interactive: {
+      type: 'button', body: { text: 'Escolha:' }, footer: { text: 'Atendimento MaisTV' },
+      action: { buttons: [
+        { type: 'reply', reply: { id: 'sales', title: 'Vendas' } },
+        { type: 'reply', reply: { id: 'support', title: 'Suporte' } },
+      ] },
+    },
   });
 });
 

@@ -42,17 +42,18 @@ export const resolveRouteQueueMapping = async ({
 export const syncQueueMemberships = async ({ tenantId, userId, userName = '', queueIds = [], isAssignable = true }, executor = null) => {
   const client = executorOf(executor);
   const authQueueIds = Array.from(new Set(queueIds.map((value) => String(value || '').trim()).filter(Boolean)));
-  const mappedQueueIds = authQueueIds.length ? (await client.query(`
+  const normalizedQueueIds = authQueueIds.length ? (await client.query(`
     SELECT id FROM support_queues
     WHERE tenant_id=$1 AND is_active=true AND (id=ANY($2::text[]) OR service_id=ANY($2::text[]))
   `, [tenantId, authQueueIds])).rows.map((row) => String(row.id)) : [];
-  const normalizedQueueIds = Array.from(new Set([...authQueueIds, ...mappedQueueIds]));
-  for (const queueId of normalizedQueueIds) {
-    await client.query(`
-      INSERT INTO support_queues (tenant_id,id,name)
-      VALUES ($1,$2,$2)
-      ON CONFLICT (tenant_id,id) DO NOTHING
-    `, [tenantId, queueId]);
+  const uniqueQueueIds = Array.from(new Set(normalizedQueueIds));
+  await client.query(`
+    UPDATE queue_memberships SET is_active=false,updated_at=now()
+    WHERE tenant_id=$1 AND user_id=$2
+      AND NOT (queue_id=ANY($3::text[]))
+      AND is_active=true
+  `, [tenantId, userId, uniqueQueueIds]);
+  for (const queueId of uniqueQueueIds) {
     await client.query(`
       INSERT INTO queue_memberships (tenant_id,queue_id,user_id,user_name,is_active,is_assignable)
       VALUES ($1,$2,$3,$4,true,$5)
@@ -60,7 +61,7 @@ export const syncQueueMemberships = async ({ tenantId, userId, userName = '', qu
         user_name=EXCLUDED.user_name,is_active=true,is_assignable=EXCLUDED.is_assignable,updated_at=now()
     `, [tenantId, queueId, userId, userName || null, Boolean(isAssignable)]);
   }
-  return normalizedQueueIds;
+  return uniqueQueueIds;
 };
 
 export const upsertAgentPresence = async ({

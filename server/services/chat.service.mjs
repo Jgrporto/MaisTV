@@ -46,7 +46,12 @@ export const queueOutboundMessage=async({auth,input})=>{
   const tenantId=auth.tenantId;const userId=auth.userId;const access=getChatAccessFilter(auth);
   if(!input.conversationId||!input.body) throw Object.assign(new Error('conversationId and body are required.'),{statusCode:400});
   const messageType=String(input.type||'text').trim().toLowerCase();
-  if(messageType!=='text')throw Object.assign(new Error('The new outbound route currently accepts text only; use the compatible /api/whatsapp/send-* media routes.'),{statusCode:400});
+  if(!['text','interactive'].includes(messageType))throw Object.assign(new Error('The outbound route accepts text or interactive messages; use /api/media/send for files.'),{statusCode:400});
+  const interactivePayload=messageType==='interactive'?input.interactivePayload:null;
+  if(messageType==='interactive'){
+    const options=Array.isArray(interactivePayload?.options)?interactivePayload.options:[];
+    if(!options.length)throw Object.assign(new Error('Interactive messages require at least one option.'),{statusCode:400});
+  }
   const conversation=await getConversation(tenantId,input.conversationId,access);
   if(!conversation) throw Object.assign(new Error('Conversation not found.'),{statusCode:404});
   const outboundChannel=resolveOutboundChannel({conversation,deliveryKind:'free_text'});
@@ -60,7 +65,7 @@ export const queueOutboundMessage=async({auth,input})=>{
     if(!lockedChannel.allowed) throw Object.assign(new Error('A janela de 24h esta fechada. Use um template HSM.'),{statusCode:409,code:'customer_window_closed'});
     const routeKey=lockedChannel.routeKey;
     const phoneNumberId=lockedChannel.phoneNumberId;
-    const message=await insertPendingOutbound({tenantId,conversationId:input.conversationId,clientMessageId,type:messageType,body:input.body,routeKey,phoneNumberId,raw:{requestedBy:userId,deliveryKind:'free_text',routeKey,phoneNumberId}},client);
+    const message=await insertPendingOutbound({tenantId,conversationId:input.conversationId,clientMessageId,type:messageType,body:input.body,routeKey,phoneNumberId,raw:{requestedBy:userId,deliveryKind:'free_text',routeKey,phoneNumberId,...(interactivePayload?{interactivePayload}: {})}},client);
     const updatedConversation=await updateConversationLastOutbound(client,input.conversationId,message);
     return {message,conversation:updatedConversation||conversation};
   });

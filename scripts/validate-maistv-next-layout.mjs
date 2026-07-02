@@ -10,6 +10,7 @@ const requiredFiles = [
   'infra/nginx/production-webhook-cutover-vendas-only.conf',
   'infra/nginx/production-webhook-cutover-vendas.conf',
   'infra/nginx/production-webhook-cutover-all.conf',
+  'infra/nginx/production-webhook-cutover-default.conf',
   'infra/systemd/maistv-next-api.service',
   'infra/systemd/maistv-next-auth.service',
   'infra/systemd/maistv-next-whatsapp.service',
@@ -25,7 +26,15 @@ const requiredFiles = [
   'scripts/prepare-maistv-next-webhook-cutover.sh',
   'scripts/enable-maistv-next-webhook-cutover.sh',
   'scripts/rollback-maistv-next-webhook-cutover.sh',
+  'scripts/enable-maistv-next-default-webhook-cutover.sh',
+  'scripts/rollback-maistv-next-default-webhook-cutover.sh',
+  'scripts/backup-maistv-next-default-precutover.sh',
+  'scripts/audit-default-human-support.mjs',
+  'scripts/configure-standard-label-queues.mjs',
+  'scripts/default-cutover-report.mjs',
   'docs/maistv-next-webhook-cutover.md',
+  'docs/default-webhook-cutover.md',
+  'docs/default-human-support-runbook.md',
 ];
 for (const file of requiredFiles) {
   if (!fs.existsSync(path.join(root,file))) throw new Error(`Missing blue-green deployment file: ${file}`);
@@ -49,6 +58,13 @@ for (const expected of ['127.0.0.1:5350','X-Hub-Signature-256','Content-Type']) 
 for (const forbidden of ['location = /api/whatsapp/webhook {','location = /api/whatsapp/webhook-vendas {']) {
   if (firstCutover.includes(forbidden)) throw new Error(`Initial cutover has an unsafe extra route: ${forbidden}`);
 }
+const defaultCutover=fs.readFileSync(path.join(root,'infra/nginx/production-webhook-cutover-default.conf'),'utf8');
+for (const route of ['/api/whatsapp/webhook-vendas2','/api/whatsapp/webhook-vendas','/api/whatsapp/webhook']) {
+  const escaped=route.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  const matches=defaultCutover.match(new RegExp(`location = ${escaped} \\{`,'g')) || [];
+  if (matches.length !== 1) throw new Error(`Default cutover must contain exactly one ${route} route.`);
+}
+if (defaultCutover.includes('location /api/ {')) throw new Error('Default cutover must not replace the generic SaasTV API route.');
 for (const unit of ['maistv-next-whatsapp.service','maistv-next-checkout.service']) {
   const content=fs.readFileSync(path.join(root,'infra/systemd',unit),'utf8');
   if (!content.includes('127.0.0.1')) throw new Error(`Missing loopback bind in ${unit}`);

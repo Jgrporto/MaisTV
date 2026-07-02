@@ -2421,6 +2421,7 @@ export default function ChatWindow({
           } else {
             try {
               await sendWhatsappInteractiveMessage({
+                conversationId: conversation.id,
                 to: conversation.contact_phone,
                 text: uraPayload.text,
                 buttonText: uraPayload.buttonText,
