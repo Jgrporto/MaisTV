@@ -107,7 +107,7 @@ export const AuthProvider = ({ children }) => {
   const logout = useCallback(
     async (shouldRedirect = true) => {
       try {
-        await stopAttendancePresence({ recoverAssignments: false, reason: 'logout' });
+        await stopAttendancePresence({ recoverAssignments: true, reason: 'logout' });
       } catch {
         // logout local continua mesmo se a presenca PostgreSQL estiver indisponivel
       }

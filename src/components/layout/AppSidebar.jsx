@@ -40,6 +40,7 @@ import { Progress } from '@/components/ui/progress';
 import { useAuth } from '@/lib/AuthContext';
 import { buildLoginUrl, logoutLocalUser } from '@/lib/local-auth';
 import { canViewNavigationPermission } from '@/lib/navigation-permissions';
+import { stopAttendancePresence } from '@/lib/presence-api';
 import { currentBuildLabel, updateHistory } from '@/lib/update-history';
 import { cn } from '@/lib/utils';
 
@@ -100,6 +101,7 @@ export default function AppSidebar({ collapsed, onToggle }) {
 
     setLogoutStep('transferring');
     try {
+      await stopAttendancePresence({ recoverAssignments: true, reason: 'logout' });
       await logoutLocalUser();
       setLogoutStep('done');
       toast.success('Até logo.');

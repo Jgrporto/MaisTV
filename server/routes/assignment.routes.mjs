@@ -49,7 +49,11 @@ export const createAssignmentRouter = async ({ authMiddleware } = {}) => {
   }));
 
   router.post('/presence/start', parseJson, asyncRoute(async (req, res) => res.json(await startPresence({ auth: req.chatAuth }))));
-  router.post('/presence/stop', parseJson, asyncRoute(async (req, res) => res.json(await stopPresence({ auth: req.chatAuth, reason: req.body?.reason }))));
+  router.post('/presence/stop', parseJson, asyncRoute(async (req, res) => res.json(await stopPresence({
+    auth: req.chatAuth,
+    recoverAssignments: req.body?.recoverAssignments !== false,
+    reason: req.body?.reason,
+  }))));
   router.post('/presence/pause-distribution', parseJson, asyncRoute(async (req, res) => res.json(await pausePresence({ auth: req.chatAuth, reason: req.body?.reason, durationMinutes: req.body?.durationMinutes }))));
   router.post('/presence/resume-distribution', parseJson, asyncRoute(async (req, res) => res.json(await resumePresence({ auth: req.chatAuth }))));
   router.get('/presence/status', asyncRoute(async (req, res) => res.json(await getPresenceStatus({ auth: req.chatAuth }))));

@@ -51,6 +51,24 @@ const publishPresence = ({ tenantId, userId, presence }) => publishRealtimeEvent
   data: { userId, presence },
 });
 
+const enqueueRecoveredAssignment = async ({ tenantId, conversation, source }) => {
+  const enabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.ASSIGNMENT_ENQUEUE_ENABLED || '').trim().toLowerCase());
+  if (!enabled) return { conversationId: conversation.id, queued: false, reason: 'assignment_enqueue_disabled' };
+  if (!conversation.queue_id) return { conversationId: conversation.id, queued: false, reason: 'queue_missing' };
+
+  try {
+    await addJob('assignment', 'assign-conversation', {
+      tenantId,
+      conversationId: conversation.id,
+      routeKey: conversation.last_inbound_route_key || conversation.route_key,
+      source,
+    }, { jobId: `assignment:${source}:${tenantId}:${conversation.id}:${Date.now()}` });
+    return { conversationId: conversation.id, queued: true };
+  } catch (err) {
+    return { conversationId: conversation.id, queued: false, reason: err?.message || 'assignment_enqueue_failed' };
+  }
+};
+
 const ensureTargetMembership = async (client, { tenantId, queueId, targetUserId }) => {
   const membership = (await client.query(`
     SELECT * FROM queue_memberships
@@ -178,11 +196,74 @@ export const startPresence = async ({ auth }) => {
   return { ok: true, presence: shaped, distributionPause: { active: pauseActive, pausedUntil: presence.paused_until, remainingMs: pauseActive ? Date.parse(presence.paused_until)-Date.now() : 0, reason: presence.pause_reason || '' } };
 };
 
-export const stopPresence = async ({ auth, reason = 'logout' }) => {
+export const stopPresence = async ({ auth, recoverAssignments = true, reason = 'logout' }) => {
   const presence = await upsertAgentPresence({ tenantId: auth.tenantId, userId: auth.userId, userName: userNameOf(auth), userEmail: userEmailOf(auth), role: roleOf(auth), status: 'offline', pauseReason: reason });
   const shaped = shapePresence(presence);
+  const recoveredConversations = recoverAssignments ? await withTransaction(async (client) => {
+    const result = await client.query(`
+      WITH selected AS (
+        SELECT id,queue_id,assigned_agent_id
+        FROM conversations
+        WHERE tenant_id=$1
+          AND assigned_agent_id=$2
+          AND status<>'closed'
+          AND assignment_status IN ('assigned','transferred')
+        FOR UPDATE
+      ),
+      updated AS (
+        UPDATE conversations c SET
+          assigned_agent_id=NULL,
+          assigned_agent_name=NULL,
+          assigned_at=NULL,
+          assignment_status=CASE WHEN NULLIF(c.queue_id,'') IS NULL THEN 'unassigned' ELSE 'queued' END,
+          last_assignment_at=now(),
+          updated_at=now()
+        FROM selected s
+        WHERE c.tenant_id=$1 AND c.id=s.id
+        RETURNING c.*,s.queue_id AS previous_queue_id,s.assigned_agent_id AS previous_assigned_agent_id
+      )
+      SELECT * FROM updated
+    `, [auth.tenantId, auth.userId]);
+
+    for (const conversation of result.rows) {
+      await client.query(`
+        INSERT INTO conversation_assignment_events (
+          tenant_id,conversation_id,event_type,from_queue_id,to_queue_id,
+          from_agent_id,to_agent_id,actor_user_id,reason,metadata_json
+        ) VALUES ($1,$2,'logout_requeue',$3,$4,$5,NULL,$6,$7,$8::jsonb)
+      `, [
+        auth.tenantId,
+        conversation.id,
+        conversation.previous_queue_id || null,
+        conversation.queue_id || null,
+        conversation.previous_assigned_agent_id || auth.userId,
+        auth.userId,
+        reason || 'logout',
+        JSON.stringify({ source: 'presence_stop', recoverAssignments: true }),
+      ]);
+    }
+
+    return result.rows;
+  }) : [];
+
   await publishPresence({ tenantId: auth.tenantId, userId: auth.userId, presence: shaped });
-  return { ok: true, presence: shaped, requeuedConversationIds: [] };
+  await Promise.all(recoveredConversations.map((conversation) => publishAssignment({
+    conversation,
+    type: 'queue_updated',
+    data: { action: 'logout_requeue', reason },
+  })));
+  const assignmentRecoveryJobs = await Promise.all(recoveredConversations.map((conversation) => enqueueRecoveredAssignment({
+    tenantId: auth.tenantId,
+    conversation,
+    source: 'logout_requeue',
+  })));
+  return {
+    ok: true,
+    presence: shaped,
+    requeuedConversationIds: recoveredConversations.map((conversation) => conversation.id),
+    requeuedConversations: recoveredConversations,
+    assignmentRecoveryJobs,
+  };
 };
 
 export const pausePresence = async ({ auth, reason = 'lunch', durationMinutes = 10 }) => {
