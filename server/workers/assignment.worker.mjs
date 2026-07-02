@@ -20,6 +20,7 @@ await startWorker(QUEUE_NAMES.assignment, async (job) => {
     tenantId: job.data.tenantId,
     conversationId: job.data.conversationId,
     allowedRoutes,
+    ignoreQueueAge: job.data.ignoreQueueAge === true,
     maxQueueAgeMinutes: Math.max(1, Number(process.env.ASSIGNMENT_MAX_QUEUE_AGE_MINUTES || 60)),
     presenceTtlSeconds: Math.max(30, Number(process.env.ASSIGNMENT_PRESENCE_TTL_SECONDS || 90)),
   });

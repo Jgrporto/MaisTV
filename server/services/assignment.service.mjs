@@ -51,8 +51,10 @@ const publishPresence = ({ tenantId, userId, presence }) => publishRealtimeEvent
   data: { userId, presence },
 });
 
-const enqueueRecoveredAssignment = async ({ tenantId, conversation, source }) => {
-  const enabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.ASSIGNMENT_ENQUEUE_ENABLED || '').trim().toLowerCase());
+const isAssignmentEnqueueEnabled = () => ['1', 'true', 'yes', 'on'].includes(String(process.env.ASSIGNMENT_ENQUEUE_ENABLED || '').trim().toLowerCase());
+
+const enqueueAssignmentJob = async ({ tenantId, conversation, source, ignoreQueueAge = false }) => {
+  const enabled = isAssignmentEnqueueEnabled();
   if (!enabled) return { conversationId: conversation.id, queued: false, reason: 'assignment_enqueue_disabled' };
   if (!conversation.queue_id) return { conversationId: conversation.id, queued: false, reason: 'queue_missing' };
 
@@ -60,13 +62,45 @@ const enqueueRecoveredAssignment = async ({ tenantId, conversation, source }) =>
     await addJob('assignment', 'assign-conversation', {
       tenantId,
       conversationId: conversation.id,
-      routeKey: conversation.last_inbound_route_key || conversation.route_key,
+      routeKey: conversation.last_inbound_route_key || conversation.route_key || 'default',
+      ignoreQueueAge,
       source,
     }, { jobId: `assignment:${source}:${tenantId}:${conversation.id}:${Date.now()}` });
     return { conversationId: conversation.id, queued: true };
   } catch (err) {
     return { conversationId: conversation.id, queued: false, reason: err?.message || 'assignment_enqueue_failed' };
   }
+};
+
+const enqueuePendingAssignmentsForQueues = async ({ tenantId, queueIds = [], source = 'presence_start' }) => {
+  if (!isAssignmentEnqueueEnabled()) return { skipped: true, reason: 'assignment_enqueue_disabled', jobs: [] };
+  const uniqueQueueIds = Array.from(new Set(queueIds.map(text).filter(Boolean)));
+  if (!uniqueQueueIds.length) return { skipped: true, reason: 'queue_missing', jobs: [] };
+  const limit = Math.max(1, Math.min(500, Number(process.env.ASSIGNMENT_LOGIN_SWEEP_LIMIT || 100)));
+  const maxAgeMinutes = Math.max(0, Number(process.env.ASSIGNMENT_LOGIN_SWEEP_MAX_AGE_MINUTES || 0));
+  const ignoreQueueAge = maxAgeMinutes === 0;
+  const values = [tenantId, uniqueQueueIds, limit];
+  const ageFilter = maxAgeMinutes > 0 ? 'AND COALESCE(last_message_at,updated_at,created_at) >= now()-make_interval(mins=>$4::int)' : '';
+  if (maxAgeMinutes > 0) values.push(maxAgeMinutes);
+  const conversations = (await withTransaction(async (client) => (await client.query(`
+    SELECT id,queue_id,route_key,last_inbound_route_key,last_message_at,updated_at
+    FROM conversations
+    WHERE tenant_id=$1
+      AND queue_id=ANY($2::text[])
+      AND status<>'closed'
+      AND assigned_agent_id IS NULL
+      AND assignment_status IN ('queued','unassigned')
+      ${ageFilter}
+    ORDER BY last_message_at DESC NULLS LAST,updated_at DESC
+    LIMIT $3
+  `, values)).rows)) || [];
+  const jobs = await Promise.all(conversations.map((conversation) => enqueueAssignmentJob({
+    tenantId,
+    conversation,
+    source,
+    ignoreQueueAge,
+  })));
+  return { skipped: false, scannedQueueIds: uniqueQueueIds, conversationIds: conversations.map((conversation) => conversation.id), jobs };
 };
 
 const ensureTargetMembership = async (client, { tenantId, queueId, targetUserId }) => {
@@ -193,7 +227,12 @@ export const startPresence = async ({ auth }) => {
   if (!current || current.status !== presence.status || String(current.paused_until || '') !== String(presence.paused_until || '')) {
     await publishPresence({ tenantId: auth.tenantId, userId: auth.userId, presence: shaped });
   }
-  return { ok: true, presence: shaped, distributionPause: { active: pauseActive, pausedUntil: presence.paused_until, remainingMs: pauseActive ? Date.parse(presence.paused_until)-Date.now() : 0, reason: presence.pause_reason || '' } };
+  const pendingAssignmentSweep = pauseActive || isPrivilegedChatUser(auth) ? { skipped: true, reason: pauseActive ? 'presence_paused' : 'privileged_user', jobs: [] } : await enqueuePendingAssignmentsForQueues({
+    tenantId: auth.tenantId,
+    queueIds,
+    source: 'presence_start',
+  });
+  return { ok: true, presence: shaped, distributionPause: { active: pauseActive, pausedUntil: presence.paused_until, remainingMs: pauseActive ? Date.parse(presence.paused_until)-Date.now() : 0, reason: presence.pause_reason || '' }, pendingAssignmentSweep };
 };
 
 export const stopPresence = async ({ auth, recoverAssignments = true, reason = 'logout' }) => {
@@ -252,7 +291,7 @@ export const stopPresence = async ({ auth, recoverAssignments = true, reason = '
     type: 'queue_updated',
     data: { action: 'logout_requeue', reason },
   })));
-  const assignmentRecoveryJobs = await Promise.all(recoveredConversations.map((conversation) => enqueueRecoveredAssignment({
+  const assignmentRecoveryJobs = await Promise.all(recoveredConversations.map((conversation) => enqueueAssignmentJob({
     tenantId: auth.tenantId,
     conversation,
     source: 'logout_requeue',
@@ -280,7 +319,12 @@ export const resumePresence = async ({ auth }) => {
   const presence = await upsertAgentPresence({ tenantId: auth.tenantId, userId: auth.userId, userName: userNameOf(auth), userEmail: userEmailOf(auth), role: roleOf(auth), status: 'online' });
   const shaped = shapePresence({ ...presence, queue_ids: queueIds });
   await publishPresence({ tenantId: auth.tenantId, userId: auth.userId, presence: shaped });
-  return { ok: true, presence: shaped, distributionPause: { active: false, remainingMs: 0 } };
+  const pendingAssignmentSweep = isPrivilegedChatUser(auth) ? { skipped: true, reason: 'privileged_user', jobs: [] } : await enqueuePendingAssignmentsForQueues({
+    tenantId: auth.tenantId,
+    queueIds,
+    source: 'presence_resume',
+  });
+  return { ok: true, presence: shaped, distributionPause: { active: false, remainingMs: 0 }, pendingAssignmentSweep };
 };
 export const getPresenceStatus = async ({ auth }) => {
   const row = await getAgentPresence({ tenantId: auth.tenantId, userId: auth.userId });
@@ -296,14 +340,15 @@ export const queueConversationAssignment = async ({ tenantId, conversationId, in
   return addJob('assignment', 'assign-conversation', { tenantId, conversationId, inboundMessageId, routeKey }, { jobId: `assignment:${tenantId}:${inboundMessageId || conversationId}` });
 };
 
-export const autoAssignConversation = async ({ tenantId, conversationId, allowedRoutes = [], maxQueueAgeMinutes = 60, presenceTtlSeconds = 90 }) => {
+export const autoAssignConversation = async ({ tenantId, conversationId, allowedRoutes = [], ignoreQueueAge = false, maxQueueAgeMinutes = 60, presenceTtlSeconds = 90 }) => {
   const result = await withTransaction(async (client) => {
     const conversation = (await client.query(`SELECT * FROM conversations WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [tenantId, conversationId])).rows[0];
     if (!conversation) return { skipped: true, reason: 'conversation_not_found' };
-    if (allowedRoutes.length && !allowedRoutes.includes(text(conversation.route_key).toLowerCase())) return { skipped: true, reason: 'route_not_allowed' };
+    const routeKey = text(conversation.route_key || conversation.last_inbound_route_key || 'default').toLowerCase() || 'default';
+    if (allowedRoutes.length && !allowedRoutes.includes(routeKey)) return { skipped: true, reason: 'route_not_allowed' };
     if (conversation.status === 'closed' || conversation.assignment_status === 'closed') return { skipped: true, reason: 'closed' };
     const lastMessageAt = Date.parse(String(conversation.last_message_at || conversation.updated_at || ''));
-    if (Number.isFinite(lastMessageAt) && Date.now() - lastMessageAt > maxQueueAgeMinutes * 60_000) return { skipped: true, reason: 'conversation_too_old' };
+    if (!ignoreQueueAge && Number.isFinite(lastMessageAt) && Date.now() - lastMessageAt > maxQueueAgeMinutes * 60_000) return { skipped: true, reason: 'conversation_too_old' };
     if (conversation.assigned_agent_id || !['queued', 'unassigned'].includes(conversation.assignment_status)) return { skipped: true, reason: 'already_assigned' };
     if (!conversation.queue_id) return { skipped: true, reason: 'queue_missing' };
     const activeSession = (await client.query(`SELECT 1 FROM chatbot_sessions WHERE tenant_id=$1 AND conversation_id=$2 AND status='active' LIMIT 1`, [tenantId, conversationId])).rows[0];
