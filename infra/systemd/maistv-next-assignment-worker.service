@@ -9,10 +9,8 @@ User=root
 Group=root
 WorkingDirectory=/root/MaisTV
 Environment=NODE_ENV=production
-Environment=ASSIGNMENT_WORKER_ENABLED=true
-Environment=ASSIGNMENT_ALLOWED_ROUTES=vendas
 EnvironmentFile=/etc/maistv-next/maistv-next.env
-ExecStart=/usr/bin/env ASSIGNMENT_WORKER_ENABLED=true ASSIGNMENT_ALLOWED_ROUTES=vendas /usr/bin/node server/workers/assignment.worker.mjs
+ExecStart=/usr/bin/node server/workers/assignment.worker.mjs
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=60

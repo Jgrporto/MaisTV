@@ -6,12 +6,13 @@ import { getLogger } from '../services/logger.service.mjs';
 import { startWorker } from './worker-runtime.mjs';
 
 const enabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.ASSIGNMENT_WORKER_ENABLED || '').trim().toLowerCase());
-const allowedRoutes = String(process.env.ASSIGNMENT_ALLOWED_ROUTES || 'vendas')
+const allowedRoutes = String(process.env.ASSIGNMENT_ALLOWED_ROUTES || '')
   .split(',')
   .map((value) => value.trim().toLowerCase())
   .filter(Boolean);
 
 if (!enabled) throw new Error('Assignment worker is disabled. Set ASSIGNMENT_WORKER_ENABLED=true only in controlled homologation.');
+if (!allowedRoutes.length) throw new Error('ASSIGNMENT_ALLOWED_ROUTES must list at least one route for controlled assignment homologation.');
 
 await startWorker(QUEUE_NAMES.assignment, async (job) => {
   const logger = await getLogger();
