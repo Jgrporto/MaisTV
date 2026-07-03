@@ -281,9 +281,12 @@ export default function Attendance() {
   const { data: chatbotRuntimeState } = useQuery({
     queryKey: ['chatbot-runtime-state'],
     queryFn: fetchChatbotRuntimeState,
-    enabled: backgroundQueryReady,
-    staleTime: 10000,
-    refetchInterval: backgroundQueryReady ? CHATBOT_RUNTIME_REFRESH_INTERVAL_MS : false,
+    enabled: backgroundQueryReady && isAdminLikeUser(effectiveUser),
+    staleTime: 30000,
+    refetchInterval: backgroundQueryReady && isAdminLikeUser(effectiveUser)
+      ? CHATBOT_RUNTIME_REFRESH_INTERVAL_MS
+      : false,
+    refetchOnWindowFocus: false,
   });
 
   useEffect(() => {

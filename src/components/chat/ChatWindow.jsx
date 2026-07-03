@@ -92,6 +92,8 @@ const OUTGOING_RECONCILE_WINDOW_MS = 2 * 60 * 1000;
 const MESSAGE_CACHE_LIMIT = 160;
 const VISIBLE_MESSAGE_DAY_LIMIT = 2;
 const CHATBOT_EVENTS_IDLE_TTL_MS = 60_000;
+const BACKGROUND_CHECKOUT_STATUS_DELAY_MS = 2_000;
+const BACKGROUND_CHATBOT_EVENTS_DELAY_MS = 4_000;
 
 const chatbotEventsPrefetchTimestamps = new Map();
 
@@ -1504,9 +1506,12 @@ export default function ChatWindow({
     if (!messagesReady || !conversation?.id) return undefined;
     let active = true;
     const conversationId = String(conversation.id);
-    const runBackgroundDetails = () => {
+    const checkoutDelayId = window.setTimeout(() => {
       if (!active || activeConversationIdRef.current !== conversationId) return;
       setCheckoutStatusConversationId(conversationId);
+    }, BACKGROUND_CHECKOUT_STATUS_DELAY_MS);
+    const chatbotDelayId = window.setTimeout(() => {
+      if (!active || activeConversationIdRef.current !== conversationId) return;
       const lastChatbotFetchAt = Number(chatbotEventsPrefetchTimestamps.get(conversationId) || 0);
       if (Date.now() - lastChatbotFetchAt < CHATBOT_EVENTS_IDLE_TTL_MS) {
         return;
@@ -1518,14 +1523,11 @@ export default function ChatWindow({
       }).catch(() => {
         chatbotEventsPrefetchTimestamps.delete(conversationId);
       });
-    };
-    const idleId = typeof window.requestIdleCallback === 'function'
-      ? window.requestIdleCallback(runBackgroundDetails, { timeout: 1500 })
-      : window.setTimeout(runBackgroundDetails, 250);
+    }, BACKGROUND_CHATBOT_EVENTS_DELAY_MS);
     return () => {
       active = false;
-      if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(idleId);
-      else window.clearTimeout(idleId);
+      window.clearTimeout(checkoutDelayId);
+      window.clearTimeout(chatbotDelayId);
     };
   }, [conversation?.id, messagesReady]);
 

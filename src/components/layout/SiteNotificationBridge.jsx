@@ -71,7 +71,10 @@ export default function SiteNotificationBridge() {
   const previousSuccessfulCustomerSyncRef = useRef('');
   const lastStartedAutoScheduleRef = useRef('');
   const isPlayingRef = useRef(false);
-  const { customLabels, assignments, stageAssignments } = useLabelCatalog();
+  const isAttendanceRoute = location.pathname === '/';
+  const { customLabels, assignments, stageAssignments } = useLabelCatalog({
+    enabled: !isAttendanceRoute,
+  });
   const customerBrowserSync = useCustomerBrowserSync();
   const chatbotEvaluatedMessageKeysRef = useRef(new Set());
   const chatbotInFlightKeysRef = useRef(new Set());
@@ -80,7 +83,6 @@ export default function SiteNotificationBridge() {
   const chatbotActiveCountRef = useRef(0);
   const chatbotInvalidationTimerRef = useRef(null);
   const selectedConversationId = useChatStore((state) => state.selectedConversation?.id || '');
-  const isAttendanceRoute = location.pathname === '/';
 
   useChatEvents({ selectedConversationId });
 
@@ -123,9 +125,9 @@ export default function SiteNotificationBridge() {
   const { data: customerSyncState } = useQuery({
     queryKey: ['customer-sync-state'],
     queryFn: fetchCustomerSyncState,
-    enabled: customerBrowserSync.status === 'running' || deferredBridgeReady,
+    enabled: customerBrowserSync.status === 'running' || (!isAttendanceRoute && deferredBridgeReady),
     staleTime: 10000,
-    refetchInterval: customerBrowserSync.status === 'running' || deferredBridgeReady
+    refetchInterval: customerBrowserSync.status === 'running' || (!isAttendanceRoute && deferredBridgeReady)
       ? CUSTOMER_SYNC_STATE_REFRESH_INTERVAL_MS
       : false,
   });
@@ -407,7 +409,7 @@ export default function SiteNotificationBridge() {
   }, [customerSyncState?.lastSuccessfulSyncAt, queryClient]);
 
   useEffect(() => {
-    if (customerBrowserSync.status === 'running') {
+    if (isAttendanceRoute || customerBrowserSync.status === 'running') {
       return undefined;
     }
 
@@ -440,7 +442,7 @@ export default function SiteNotificationBridge() {
     return () => {
       window.clearTimeout(timerId);
     };
-  }, [customerBrowserSync.status, customerSyncState?.nextScheduledAt]);
+  }, [customerBrowserSync.status, customerSyncState?.nextScheduledAt, isAttendanceRoute]);
 
   return null;
 }

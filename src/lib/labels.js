@@ -599,12 +599,18 @@ export function conversationHasLabel(conversation, labelId) {
   return labelIds.includes(labelId);
 }
 
-export function useLabelCatalog() {
+export function useLabelCatalog(options = {}) {
+  const enabled = options.enabled ?? true;
+  const staleTime = Number.isFinite(Number(options.staleTime)) ? Number(options.staleTime) : 10000;
+  const refetchInterval = options.refetchInterval === undefined
+    ? LABEL_CATALOG_REFRESH_INTERVAL_MS
+    : options.refetchInterval;
   const query = useQuery({
     queryKey: LABELS_QUERY_KEY,
     queryFn: fetchLabelCatalog,
-    staleTime: 10000,
-    refetchInterval: LABEL_CATALOG_REFRESH_INTERVAL_MS,
+    enabled,
+    staleTime,
+    refetchInterval,
   });
 
   useEffect(() => {

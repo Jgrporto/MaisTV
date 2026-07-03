@@ -37,6 +37,7 @@ export default function VirtualizedMessageThread({
 }) {
   const virtuosoRef = useRef(null);
   const previousLengthRef = useRef(items.length);
+  const startReachedEnabledAtRef = useRef(Date.now() + 1200);
   const isAtBottom = useChatStore((state) => state.isAtBottom);
   const newMessageCount = useChatStore((state) => state.newMessageCount);
   const setIsAtBottom = useChatStore((state) => state.setIsAtBottom);
@@ -53,6 +54,10 @@ export default function VirtualizedMessageThread({
   }, [incrementNewMessageCount, isAtBottom, items]);
 
   useEffect(() => {
+    startReachedEnabledAtRef.current = Date.now() + 1200;
+  }, [items.length]);
+
+  useEffect(() => {
     lastReportedAtBottomRef.current = isAtBottom;
   }, [isAtBottom]);
 
@@ -66,6 +71,9 @@ export default function VirtualizedMessageThread({
   }, [setIsAtBottom, stickToBottomRef]);
 
   const handleStartReached = useCallback(() => {
+    if (Date.now() < startReachedEnabledAtRef.current) {
+      return;
+    }
     if (hasOlderMessages && !isLoadingOlder) void onLoadOlder?.();
   }, [hasOlderMessages, isLoadingOlder, onLoadOlder]);
 
