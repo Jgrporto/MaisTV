@@ -66,3 +66,32 @@ test('confirmed customer with the latest expiry wins for duplicate phone records
   });
   assert.equal(conversation.customer_summary.id, 'current');
 });
+
+test('customer summary never exposes credential or raw payload fields', () => {
+  clearCustomerSummaryCache();
+  const [conversation] = enrichConversationsWithCustomerSummaries([
+    { customer_id: 'secure-customer' },
+  ], {
+    customers: [{
+      id: 'secure-customer',
+      display_name: 'Cliente seguro',
+      password: 'secret',
+      senha: 'secret',
+      token: 'secret',
+      raw: { authorization: 'secret' },
+    }],
+  });
+  assert.deepEqual(
+    Object.keys(conversation.customer_summary).sort(),
+    ['connections', 'dueDateLabel', 'existsInBase', 'expiresAt', 'id', 'isTest', 'name', 'phoneDigits', 'planName', 'status', 'statusLabel', 'username', 'whatsapp'].sort(),
+  );
+});
+
+test('invalid customer snapshot degrades to a null summary without dropping conversations', () => {
+  clearCustomerSummaryCache();
+  const brokenStore = {};
+  Object.defineProperty(brokenStore, 'customers', { get: () => { throw new Error('snapshot unavailable'); } });
+  const [conversation] = enrichConversationsWithCustomerSummaries([{ id: 'conversation-1' }], brokenStore);
+  assert.equal(conversation.id, 'conversation-1');
+  assert.equal(conversation.customer_summary, null);
+});

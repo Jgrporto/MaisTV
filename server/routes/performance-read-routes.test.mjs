@@ -91,6 +91,40 @@ test('conversation preferences only returns requested visible conversation ids',
   assert.deepEqual(response.payload.map((item) => item.id || item.conversation_id), ['conversation-1', 'conversation-3']);
 });
 
+test('conversation preferences rejects unbounded and oversized reads', async () => {
+  const deps = { readStore: async () => ({ conversationPreferences: [] }), sendJson };
+  const missingIdsResponse = createResponse();
+  await handleConversationPreferenceReadRoutes(
+    { method: 'GET' },
+    missingIdsResponse,
+    new URL('http://local/api/local/conversation-preferences'),
+    deps,
+  );
+  assert.equal(missingIdsResponse.statusCode, 400);
+  assert.equal(missingIdsResponse.payload.error, 'conversation_ids_required');
+
+  const oversizedResponse = createResponse();
+  const ids = Array.from({ length: 101 }, (_, index) => `conversation-${index}`).join(',');
+  await handleConversationPreferenceReadRoutes(
+    { method: 'GET' },
+    oversizedResponse,
+    new URL(`http://local/api/local/conversation-preferences?ids=${ids}`),
+    deps,
+  );
+  assert.equal(oversizedResponse.statusCode, 400);
+  assert.equal(oversizedResponse.payload.error, 'too_many_conversation_ids');
+  assert.equal(oversizedResponse.payload.max, 100);
+});
+
+test('quick reply collections have bounded defaults and lightweight schedule projections', async () => {
+  const localApi = await fs.readFile(new URL('../local-api.mjs', import.meta.url), 'utf8');
+  assert.match(localApi, /QuickReply:\s*50/);
+  assert.match(localApi, /QuickReplySchedule:\s*50/);
+  assert.match(localApi, /QuickReplySchedule:\s*100/);
+  const scheduleProjection = localApi.match(/if \(entityName === 'QuickReplySchedule'\) \{[\s\S]*?\n  \}/)?.[0] || '';
+  assert.doesNotMatch(scheduleProjection, /quickReplySnapshot|conversationSnapshot|hsmVariables|hsmMedia/);
+});
+
 test('attendance hot path has no full customer or legacy conversation fetch', async () => {
   const [attendance, notificationBridge] = await Promise.all([
     fs.readFile(new URL('../../src/pages/Attendance.jsx', import.meta.url), 'utf8'),

@@ -49,7 +49,10 @@ export const createAssignmentRouter = async ({ authMiddleware } = {}) => {
     res.json({ items: await getConversationAssignmentHistory({ tenantId: req.chatAuth.tenantId, conversationId: req.params.conversationId }) });
   }));
 
-  router.post('/presence/start', parseJson, asyncRoute(async (req, res) => res.json(await startPresence({ auth: req.chatAuth }))));
+  router.post('/presence/start', parseJson, asyncRoute(async (req, res) => res.json(await startPresence({
+    auth: req.chatAuth,
+    sessionId: req.get('x-presence-session-id') || req.body?.sessionId || '',
+  }))));
   router.post('/presence/heartbeat', parseJson, asyncRoute(async (req, res) => res.json(await heartbeatPresence({ auth: req.chatAuth }))));
   router.post('/presence/stop', parseJson, asyncRoute(async (req, res) => res.json(await stopPresence({
     auth: req.chatAuth,

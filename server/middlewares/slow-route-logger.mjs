@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   finishPerfMeasure,
   parsePositiveInt,
@@ -5,6 +6,7 @@ import {
 } from '../utils/perf-log.mjs';
 
 const DEFAULT_THRESHOLD_MS = 750;
+const DEFAULT_LARGE_RESPONSE_BYTES = 1024 * 1024;
 
 const SENSITIVE_QUERY_KEY_PATTERN = /(token|senha|password|pass|authorization|auth|secret|checkout)/i;
 
@@ -42,6 +44,24 @@ const byteLengthOf = (chunk, encoding) => {
 const normalizeLogPart = (value) =>
   String(value || '').trim().replace(/[\r\n\t]+/g, ' ').slice(0, 120);
 
+const normalizeRequestId = (value) => {
+  const normalized = String(value || '').trim();
+  return /^[a-zA-Z0-9._:-]{1,128}$/.test(normalized) ? normalized : '';
+};
+
+const readTiming = (req, res, camelName, snakeName) => {
+  const timingSources = [res.locals?.perfTimings, req.perfTimings, res.perfTimings];
+  for (const source of timingSources) {
+    const raw = source?.[camelName] ?? source?.[snakeName];
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed >= 0) return Math.round(parsed * 100) / 100;
+  }
+  return undefined;
+};
+
+const formatOptionalTiming = (name, value) =>
+  value === undefined ? '' : ` ${name}=${value}`;
+
 export const attachSlowRouteLogger = (req, res, options = {}) => {
   if (!req || !res || res.__slowRouteLoggerAttached) {
     return;
@@ -53,7 +73,15 @@ export const attachSlowRouteLogger = (req, res, options = {}) => {
     options.thresholdMs || process.env.SLOW_ROUTE_THRESHOLD_MS,
     DEFAULT_THRESHOLD_MS,
   );
+  const largeResponseBytes = parsePositiveInt(
+    options.largeResponseBytes || process.env.LARGE_RESPONSE_THRESHOLD_BYTES,
+    DEFAULT_LARGE_RESPONSE_BYTES,
+  );
   const source = normalizeLogPart(options.source);
+  const incomingRequestId = normalizeRequestId(req.headers?.['x-request-id']);
+  const requestId = incomingRequestId || randomUUID();
+  req.requestId = requestId;
+  res.setHeader?.('X-Request-Id', requestId);
   const measure = startPerfMeasure();
   let responseBytes = 0;
 
@@ -73,8 +101,6 @@ export const attachSlowRouteLogger = (req, res, options = {}) => {
   res.on('finish', () => {
     const perf = finishPerfMeasure(measure);
     const durationMs = perf.durationMs;
-    if (durationMs < thresholdMs) return;
-
     const contentType = String(res.getHeader?.('Content-Type') || '').toLowerCase();
     const urlPath = normalizePathForLog(req);
     if (contentType.includes('text/event-stream') || urlPath.endsWith('/stream')) {
@@ -86,11 +112,25 @@ export const attachSlowRouteLogger = (req, res, options = {}) => {
     const role = normalizeLogPart(req.authContext?.user?.role || req.authContext?.user?.role_name);
     const sourcePart = source ? `${source} ` : '';
     const rolePart = role ? ` role=${role}` : '';
-    const bytesPart = measuredBytes > 0 ? ` bytes=${measuredBytes}` : '';
-    const perfPart = ` cpuUserMs=${perf.cpuUserMs} cpuSystemMs=${perf.cpuSystemMs} rssMb=${perf.rssMb} heapUsedMb=${perf.heapUsedMb}`;
+    const bytesPart = measuredBytes > 0
+      ? ` bytes=${measuredBytes} response_bytes=${measuredBytes}`
+      : '';
+    const perfPart = ` cpuUserMs=${perf.cpuUserMs} cpuSystemMs=${perf.cpuSystemMs} rssMb=${perf.rssMb} heapUsedMb=${perf.heapUsedMb} eventLoopDelayMs=${perf.eventLoopDelayMs}`;
+    const timingPart = [
+      ['postgresMs', 'postgres_ms', 'postgres_ms'],
+      ['storeMs', 'store_ms', 'store_ms'],
+      ['transformMs', 'transform_ms', 'transform_ms'],
+      ['serializeMs', 'serialize_ms', 'serialize_ms'],
+    ].map(([camelName, snakeName, logName]) =>
+      formatOptionalTiming(logName, readTiming(req, res, camelName, snakeName)),
+    ).join('');
+    const common = `${sourcePart}${normalizeLogPart(req.method)} ${urlPath} ${durationMs}ms duration_ms=${durationMs} status=${res.statusCode}${bytesPart}${rolePart} request_id=${requestId}${perfPart} event_loop_delay_ms=${perf.eventLoopDelayMs}${timingPart}`;
 
-    console.warn(
-      `[SLOW_ROUTE] ${sourcePart}${normalizeLogPart(req.method)} ${urlPath} ${durationMs}ms status=${res.statusCode}${bytesPart}${rolePart}${perfPart}`,
-    );
+    if (durationMs >= thresholdMs) {
+      console.warn(`[SLOW_ROUTE] ${common}`);
+    }
+    if (measuredBytes > largeResponseBytes) {
+      console.warn(`[LARGE_RESPONSE] ${common} thresholdBytes=${largeResponseBytes}`);
+    }
   });
 };

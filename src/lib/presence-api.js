@@ -9,11 +9,12 @@ export const fetchAttendancePresenceStatus = async () => {
   return (await requestChatJson('/api/presence/status', { method: 'GET' })) || {};
 };
 
-export const startAttendancePresence = async () => {
+export const startAttendancePresence = async ({ sessionId = '' } = {}) => {
   return requestChatJson('/api/presence/start', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...(sessionId ? { 'X-Presence-Session-Id': sessionId } : {}),
     },
   });
 };

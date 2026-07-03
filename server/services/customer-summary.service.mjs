@@ -118,14 +118,19 @@ const shouldReplace = (current, candidate) => {
 };
 
 const buildIndex = (store = {}) => {
-  const customers = Array.isArray(store.customers) ? store.customers : [];
+  let customers = [];
+  try {
+    customers = Array.isArray(store?.customers) ? store.customers : [];
+  } catch {
+    customers = [];
+  }
   if (cachedIndex?.customers === customers) return cachedIndex;
 
   const byId = new Map();
   const byPhone = new Map();
   for (const customer of customers) {
     const id = String(customer?.id || '').trim();
-    if (id) byId.set(id, customer);
+    if (id && shouldReplace(byId.get(id), customer)) byId.set(id, customer);
     const phone = customer?.phone_digits || customer?.whatsapp;
     const canonical = canonicalPhone(phone);
     for (const key of buildCustomerPhoneLookupKeys(phone)) {
@@ -160,8 +165,12 @@ export const resolveCustomerForConversation = (conversation = {}, store = {}) =>
 
 export const enrichConversationsWithCustomerSummaries = (conversations = [], store = {}) =>
   (Array.isArray(conversations) ? conversations : []).map((conversation) => {
-    const customer = resolveCustomerForConversation(conversation, store);
-    return { ...conversation, customer_summary: customer ? shapeCustomerSummary(customer) : null };
+    try {
+      const customer = resolveCustomerForConversation(conversation, store);
+      return { ...conversation, customer_summary: customer ? shapeCustomerSummary(customer) : null };
+    } catch {
+      return { ...conversation, customer_summary: null };
+    }
   });
 
 export const clearCustomerSummaryCache = () => {

@@ -34,6 +34,7 @@ import {
 } from '@/lib/conversation-preferences';
 import {
   fetchWhatsappHistoryMessages,
+  fetchChatMessagesPage,
   fetchChatMediaUrl,
   fetchWhatsappAudioTranscription,
   fetchWhatsappMessages as fetchLegacyWhatsappMessages,
@@ -962,7 +963,8 @@ export default function ChatWindow({
   const [draftValue, setDraftValue] = useState('');
   const [messages, setMessages] = useState([]);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
-  const [backgroundDetailsEnabled, setBackgroundDetailsEnabled] = useState(false);
+  const [messagesReadyConversationId, setMessagesReadyConversationId] = useState('');
+  const [checkoutStatusConversationId, setCheckoutStatusConversationId] = useState('');
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [hasOlderMessages, setHasOlderMessages] = useState(true);
@@ -978,6 +980,7 @@ export default function ChatWindow({
   const [transferServiceId, setTransferServiceId] = useState('');
   const [isTransferringConversation, setIsTransferringConversation] = useState(false);
   const chatSidePanel = useChatStore((state) => state.sidePanel);
+  const sseStatus = useChatStore((state) => state.sseStatus);
   const setChatSidePanel = useChatStore((state) => state.setSidePanel);
   const quickReplyPanelOpen = chatSidePanel === 'quick-replies';
   const tavinhoPanelOpen = chatSidePanel === 'tavinho';
@@ -1007,10 +1010,14 @@ export default function ChatWindow({
   const retryPayloadsRef = useRef(new Map());
   const nextOutgoingOrderRef = useRef(1);
   const queryClient = useQueryClient();
-  const paginatedMessagesQuery = useMessages(conversation, { enabled: false });
+  const paginatedMessagesQuery = useMessages(conversation, {
+    enabled: ENABLE_NEW_CHAT_DATA_LAYER && Boolean(conversation?.id),
+    limit: INITIAL_MESSAGE_PAGE_SIZE,
+  });
   const paginatedHasMoreRef = useRef(true);
   const currentUserId = String(currentUser?.id || currentUser?.email || '').trim();
   const currentUserName = String(currentUser?.full_name || currentUser?.name || currentUser?.username || 'Agente').trim();
+  const messagesReady = messagesReadyConversationId === String(conversation?.id || '');
   const isCurrentUserAdmin = isAdminLikeUser(currentUser);
   const [testClock, setTestClock] = useState(() => Date.now());
   const assignmentStatus = useMemo(
@@ -1032,7 +1039,7 @@ export default function ChatWindow({
   const activeNewbrTestQuery = useQuery({
     queryKey: ['newbr-test-active', conversation?.id, conversation?.contact_phone],
     queryFn: () => fetchActiveNewbrTest({ conversationId: conversation?.id, phone: conversation?.contact_phone }),
-    enabled: backgroundDetailsEnabled && Boolean(conversation?.id || conversation?.contact_phone),
+    enabled: quickReplyPanelOpen && Boolean(conversation?.id || conversation?.contact_phone),
     staleTime: 30000,
     refetchInterval: 60000,
   });
@@ -1040,7 +1047,7 @@ export default function ChatWindow({
   const conversationTicketsQuery = useQuery({
     queryKey: ['conversation-tickets', conversation?.id],
     queryFn: () => listConversationTickets(conversation.id),
-    enabled: backgroundDetailsEnabled && Boolean(conversation?.id),
+    enabled: ticketPanelOpen && Boolean(conversation?.id),
     staleTime: 30000,
   });
 
@@ -1048,7 +1055,7 @@ export default function ChatWindow({
   const checkoutRenewalStatusQuery = useQuery({
     queryKey: ['checkout-renewal-customer-status', renewalCustomerPhone],
     queryFn: () => fetchCheckoutRenewalCustomerStatus(renewalCustomerPhone),
-    enabled: backgroundDetailsEnabled && Boolean(renewalCustomerPhone),
+    enabled: checkoutStatusConversationId === String(conversation?.id || '') && Boolean(renewalCustomerPhone),
     staleTime: 30000,
     refetchInterval: 60000,
   });
@@ -1078,6 +1085,7 @@ export default function ChatWindow({
         .filter((item) => item.active && item.status === 'approved');
     },
     staleTime: 60000,
+    enabled: !Boolean(conversation?.is_within_customer_window) || quickReplyPanelOpen,
   });
 
   const conversationTemplateServiceIds = useMemo(
@@ -1184,20 +1192,21 @@ export default function ChatWindow({
   );
 
   const fetchRecentMessagePage = useCallback(async (limit = INITIAL_MESSAGE_PAGE_SIZE) => {
-    if (!ENABLE_NEW_CHAT_DATA_LAYER) {
-      return fetchLegacyWhatsappMessages(conversation.id, {
-        tail: limit,
-        markRead: true,
+    if (ENABLE_NEW_CHAT_DATA_LAYER) {
+      const page = await fetchChatMessagesPage(conversation.id, {
+        limit,
         conversationIds: conversation.source_conversation_ids,
         sourceAccounts: conversation.source_accounts,
       });
+      return Array.isArray(page?.items) ? page.items : [];
     }
-    const result = await paginatedMessagesQuery.refetch();
-    if (result.error) throw result.error;
-    const pages = Array.isArray(result.data?.pages) ? result.data.pages : [];
-    paginatedHasMoreRef.current = Boolean(pages.at(-1)?.hasMore);
-    return flattenMessagePages(result.data).slice(-limit);
-  }, [conversation?.id, sourceAccountsKey, sourceConversationIdsKey, paginatedMessagesQuery.refetch]);
+    return fetchLegacyWhatsappMessages(conversation.id, {
+      tail: limit,
+      markRead: true,
+      conversationIds: conversation.source_conversation_ids,
+      sourceAccounts: conversation.source_accounts,
+    });
+  }, [conversation?.id, sourceAccountsKey, sourceConversationIdsKey]);
 
   const isWithin24hWindow = Boolean(conversation?.is_within_customer_window);
   const windowStatusLabel = isWithin24hWindow
@@ -1352,7 +1361,8 @@ export default function ChatWindow({
       setHasOlderMessages(true);
       setHasHistoryMessages(true);
       setIsLoadingMessages(false);
-      setBackgroundDetailsEnabled(false);
+      setMessagesReadyConversationId('');
+      setCheckoutStatusConversationId('');
       setIsLoadingOlder(false);
       setIsLoadingHistory(false);
       setDraftValue('');
@@ -1391,7 +1401,8 @@ export default function ChatWindow({
       setQuickReplyPanelOpen(false);
       setTavinhoPanelOpen(false);
       setIsLoadingMessages(true);
-      setBackgroundDetailsEnabled(false);
+      setMessagesReadyConversationId('');
+      setCheckoutStatusConversationId('');
       setIsLoadingOlder(false);
       setIsLoadingHistory(false);
       setDraftValue('');
@@ -1406,12 +1417,14 @@ export default function ChatWindow({
       ]);
 
       if (active && cachedMessages.length > 0) {
-        setMessages(mergeMessages([], filterMostRecentMessageDays(cachedMessages)));
+        setMessages((currentMessages) => mergeMessages(currentMessages, filterMostRecentMessageDays(cachedMessages)));
       }
 
       if (active) {
         setDraftValue(cachedDraft);
       }
+
+      if (ENABLE_NEW_CHAT_DATA_LAYER) return;
 
       try {
         const recentMessages = await fetchRecentMessagePage(INITIAL_MESSAGE_PAGE_SIZE);
@@ -1428,14 +1441,6 @@ export default function ChatWindow({
           (ENABLE_NEW_CHAT_DATA_LAYER ? paginatedHasMoreRef.current : recentMessages.length >= INITIAL_MESSAGE_PAGE_SIZE) ||
             visibleRecentMessages.length < recentMessages.length,
         );
-        void fetchChatbotEvents(conversationId).then((chatbotEvents) => {
-          if (!active || !Array.isArray(chatbotEvents) || chatbotEvents.length === 0) return;
-          setMessages((currentMessages) => {
-            const mergedMessages = mergeMessages(currentMessages, chatbotEvents);
-            void writeCachedMessages(conversationId, trimMessagesForCache(mergedMessages));
-            return mergedMessages;
-          });
-        }).catch(() => {});
       } catch (error) {
         if (active && cachedMessages.length === 0) {
           toast.error(error?.message || 'Não foi possível carregar as mensagens.');
@@ -1443,7 +1448,7 @@ export default function ChatWindow({
       } finally {
         if (active) {
           setIsLoadingMessages(false);
-          setBackgroundDetailsEnabled(true);
+          setMessagesReadyConversationId(String(conversationId));
           requestAnimationFrame(() => {
             messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
           });
@@ -1459,6 +1464,62 @@ export default function ChatWindow({
   }, [conversation?.id, sourceConversationIdsKey, sourceAccountsKey, fetchRecentMessagePage]);
 
   useEffect(() => {
+    if (!ENABLE_NEW_CHAT_DATA_LAYER || !conversation?.id) return;
+    if (!paginatedMessagesQuery.isSuccess) return;
+
+    const conversationId = String(conversation.id);
+    const recentMessages = flattenMessagePages(paginatedMessagesQuery.data);
+    const visibleRecentMessages = filterMostRecentMessageDays(recentMessages);
+    paginatedHasMoreRef.current = Boolean(paginatedMessagesQuery.hasNextPage);
+    setMessages((currentMessages) => {
+      const mergedMessages = mergeMessages(currentMessages, visibleRecentMessages);
+      void writeCachedMessages(conversationId, trimMessagesForCache(mergedMessages));
+      return mergedMessages;
+    });
+    setHasOlderMessages(
+      Boolean(paginatedMessagesQuery.hasNextPage) || visibleRecentMessages.length < recentMessages.length,
+    );
+    setIsLoadingMessages(false);
+    setMessagesReadyConversationId(conversationId);
+    requestAnimationFrame(() => messagesEndRef.current?.scrollIntoView({ behavior: 'auto' }));
+  }, [
+    conversation?.id,
+    paginatedMessagesQuery.data,
+    paginatedMessagesQuery.hasNextPage,
+    paginatedMessagesQuery.isSuccess,
+  ]);
+
+  useEffect(() => {
+    if (!ENABLE_NEW_CHAT_DATA_LAYER || !conversation?.id || !paginatedMessagesQuery.isError) return;
+    setIsLoadingMessages(false);
+    if (messages.length === 0) {
+      toast.error(paginatedMessagesQuery.error?.message || 'Nao foi possivel carregar as mensagens.');
+    }
+  }, [conversation?.id, messages.length, paginatedMessagesQuery.error, paginatedMessagesQuery.isError]);
+
+  useEffect(() => {
+    if (!messagesReady || !conversation?.id) return undefined;
+    let active = true;
+    const conversationId = String(conversation.id);
+    const runBackgroundDetails = () => {
+      if (!active || activeConversationIdRef.current !== conversationId) return;
+      setCheckoutStatusConversationId(conversationId);
+      void fetchChatbotEvents(conversationId).then((chatbotEvents) => {
+        if (!active || activeConversationIdRef.current !== conversationId || !Array.isArray(chatbotEvents)) return;
+        setMessages((currentMessages) => mergeMessages(currentMessages, chatbotEvents));
+      }).catch(() => {});
+    };
+    const idleId = typeof window.requestIdleCallback === 'function'
+      ? window.requestIdleCallback(runBackgroundDetails, { timeout: 1500 })
+      : window.setTimeout(runBackgroundDetails, 250);
+    return () => {
+      active = false;
+      if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(idleId);
+      else window.clearTimeout(idleId);
+    };
+  }, [conversation?.id, messagesReady]);
+
+  useEffect(() => {
     if (!conversation?.id) return;
     if (draftValue.trim().length === 0) {
       return;
@@ -1467,7 +1528,7 @@ export default function ChatWindow({
   }, [conversation?.id, draftValue]);
 
   useEffect(() => {
-    if (!conversation?.id) return undefined;
+    if (!conversation?.id || !messagesReady || sseStatus === 'connected') return undefined;
 
     let active = true;
     let timeoutId = null;
@@ -1488,15 +1549,12 @@ export default function ChatWindow({
       isPolling = true;
 
       try {
-        const [recentMessages, chatbotEvents] = await Promise.all([
-          fetchRecentMessagePage(RECENT_MESSAGE_POLL_TAIL_SIZE),
-          fetchChatbotEvents(conversation.id).catch(() => []),
-        ]);
+        const recentMessages = await fetchRecentMessagePage(RECENT_MESSAGE_POLL_TAIL_SIZE);
 
-        if (recentMessages.length > 0 || chatbotEvents.length > 0) {
+        if (recentMessages.length > 0) {
           const latestIncomingMessage = recentMessages[recentMessages.length - 1];
           setMessages((currentMessages) => {
-            const mergedMessages = mergeMessages(currentMessages, [...recentMessages, ...chatbotEvents]);
+            const mergedMessages = mergeMessages(currentMessages, recentMessages);
             void writeCachedMessages(conversation.id, trimMessagesForCache(mergedMessages));
             return mergedMessages;
           });
@@ -1539,7 +1597,7 @@ export default function ChatWindow({
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', pollImmediately);
     };
-  }, [conversation?.id, queryClient, sourceConversationIdsKey, sourceAccountsKey, fetchRecentMessagePage]);
+  }, [conversation?.id, messagesReady, queryClient, sourceConversationIdsKey, sourceAccountsKey, fetchRecentMessagePage, sseStatus]);
 
   useEffect(() => {
     if (!conversation?.id || messages.length === 0) return;
@@ -1582,15 +1640,12 @@ export default function ChatWindow({
   const refreshRecentMessages = async () => {
     if (!conversation?.id) return;
 
-    const [recentMessages, chatbotEvents] = await Promise.all([
-      fetchRecentMessagePage(INITIAL_MESSAGE_PAGE_SIZE).catch(() => []),
-      fetchChatbotEvents(conversation.id).catch(() => []),
-    ]);
+    const recentMessages = await fetchRecentMessagePage(INITIAL_MESSAGE_PAGE_SIZE).catch(() => []);
 
-    if (recentMessages.length > 0 || chatbotEvents.length > 0) {
+    if (recentMessages.length > 0) {
       const latestRecentMessage = recentMessages[recentMessages.length - 1];
       setMessages((currentMessages) => {
-        const mergedMessages = mergeMessages(currentMessages, [...recentMessages, ...chatbotEvents]);
+        const mergedMessages = mergeMessages(currentMessages, recentMessages);
         void writeCachedMessages(conversation.id, trimMessagesForCache(mergedMessages));
         return mergedMessages;
       });

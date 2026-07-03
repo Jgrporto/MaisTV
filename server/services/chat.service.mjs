@@ -9,6 +9,12 @@ import { getChatAccessFilter } from './chat-authorization.service.mjs';
 import { withTransaction } from '../db/postgres.mjs';
 import { publishRealtimeEvent } from '../realtime/pubsub.mjs';
 import { resolveOutboundChannel, resolveWindowExpiresAt } from './channel-routing.service.mjs';
+import { nowMs } from '../utils/perf-log.mjs';
+
+const addTiming = (timings, name, startedAt) => {
+  if (!timings || typeof timings !== 'object') return;
+  timings[name] = Number(timings[name] || 0) + Math.max(0, nowMs() - startedAt);
+};
 const mediaShape=(row)=>row.media_id?{
   id:row.joined_media_id||row.media_id,
   mediaId:row.joined_media_id||row.media_id,
@@ -30,18 +36,30 @@ export const shapeConversationSummary=(row,now=Date.now())=>{
   const userUnreadCount=Number.isFinite(Number(row.user_unread_count))?Number(row.user_unread_count):Number(row.unread_count||0);
   return {id:row.id,customer_id:row.customer_id,contact_name:row.contact_name,contact_phone:row.contact_phone,normalized_phone:row.normalized_phone,customer_summary:row.customer_summary||null,avatar_url:row.avatar_url,last_message:row.last_message,last_message_type:row.last_message_type,last_message_at:row.last_message_at,last_received_at:lastReceivedAt,last_client_message_time:lastReceivedAt,lastCustomerMessageAt:lastReceivedAt,windowExpiresAt,is24hWindowOpen:isWithinCustomerWindow,unread_count:userUnreadCount,unreadCount:userUnreadCount,isUnread:userUnreadCount>0,status:row.status,priority:row.priority,assigned_agent_id:row.assigned_agent_id,assigned_agent_name:row.assigned_agent_name,assigned_at:row.assigned_at,assignment_status:row.assignment_status,last_assignment_at:row.last_assignment_at,queue_id:row.queue_id,service_id:row.service_id,route_key:row.last_inbound_route_key||row.route_key,phone_number_id:row.last_inbound_phone_number_id||row.phone_number_id,last_inbound_route_key:row.last_inbound_route_key,last_inbound_phone_number_id:row.last_inbound_phone_number_id,last_24h_window_expires_at:windowExpiresAt,standard_label:row.standard_label,standard_label_source:row.standard_label_source,standard_label_reason:row.standard_label_reason,standard_label_overridden:row.standard_label_overridden,standard_label_updated_at:row.standard_label_updated_at,last_read_at:row.last_read_at,last_read_by:row.last_read_by,tags:row.tags_json||[],labels:row.labels_json||[],is_pinned:row.is_pinned,manual_unread:row.manual_unread,is_within_customer_window:isWithinCustomerWindow,source_accounts:row.source_accounts_json||[],default_route_selector:row.default_route_selector_json,active_route_selector:row.active_route_selector_json};
 };
-export const getConversationPage=async({auth,limit,cursor,status,customerSummaryProvider})=>{
+export const getConversationPage=async({auth,limit,cursor,status,customerSummaryProvider,perfTimings})=>{
   const tenantId=auth.tenantId;const access=getChatAccessFilter(auth);
   const pageSize=parseLimit(limit,30,50); const decoded=decodeCursor(cursor,'conversation');
-  const rows=await listConversations({tenantId,status,limit:pageSize,cursor:decoded,access}); const hasMore=rows.length>pageSize; const selected=rows.slice(0,pageSize);
-  const items=typeof customerSummaryProvider==='function'?await customerSummaryProvider(selected):selected;
-  return {items:items.map((r)=>shapeConversationSummary(r)),nextCursor:hasMore?encodeCursor(items.at(-1),'cursor_at'):null,hasMore};
+  const postgresStartedAt=nowMs();
+  const rows=await listConversations({tenantId,status,limit:pageSize,cursor:decoded,access});
+  addTiming(perfTimings,'postgresMs',postgresStartedAt);
+  const hasMore=rows.length>pageSize; const selected=rows.slice(0,pageSize);
+  const transformStartedAt=nowMs();
+  const items=typeof customerSummaryProvider==='function'?await customerSummaryProvider(selected,{perfTimings}):selected;
+  const shapedItems=items.map((r)=>shapeConversationSummary(r));
+  addTiming(perfTimings,'transformMs',transformStartedAt);
+  return {items:shapedItems,nextCursor:hasMore?encodeCursor(items.at(-1),'cursor_at'):null,hasMore};
 };
-export const getMessagePage=async({auth,conversationId,limit,before})=>{
+export const getMessagePage=async({auth,conversationId,limit,before,perfTimings})=>{
   const tenantId=auth.tenantId;const access=getChatAccessFilter(auth);
+  const postgresStartedAt=nowMs();
   if(!await getConversation(tenantId,conversationId,access)) throw Object.assign(new Error('Conversation not found.'),{statusCode:404});
-  const pageSize=parseLimit(limit,20,100); const rows=await listMessages({tenantId,conversationId,limit:pageSize,cursor:decodeCursor(before,'message')}); const hasMore=rows.length>pageSize; const selected=rows.slice(0,pageSize); const oldest=selected.at(-1);
-  return {items:selected.reverse().map((r)=>({...r,media:mediaShape(r),transcription:r.transcription_json||null,raw_json:undefined})),prevCursor:hasMore&&oldest?encodeCursor(oldest):null,hasMore};
+  const pageSize=parseLimit(limit,20,100); const rows=await listMessages({tenantId,conversationId,limit:pageSize,cursor:decodeCursor(before,'message')});
+  addTiming(perfTimings,'postgresMs',postgresStartedAt);
+  const hasMore=rows.length>pageSize; const selected=rows.slice(0,pageSize); const oldest=selected.at(-1);
+  const transformStartedAt=nowMs();
+  const items=selected.reverse().map((r)=>({...r,media:mediaShape(r),transcription:r.transcription_json||null,raw_json:undefined}));
+  addTiming(perfTimings,'transformMs',transformStartedAt);
+  return {items,prevCursor:hasMore&&oldest?encodeCursor(oldest):null,hasMore};
 };
 export const queueOutboundMessage=async({auth,input})=>{
   const tenantId=auth.tenantId;const userId=auth.userId;const access=getChatAccessFilter(auth);

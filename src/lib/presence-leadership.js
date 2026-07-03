@@ -57,5 +57,5 @@ export const createPresenceLeadership = (userId) => {
     }
   };
 
-  return { claim, release };
+  return { claim, release, sessionId: tabId };
 };

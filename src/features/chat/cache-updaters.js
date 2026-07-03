@@ -110,3 +110,41 @@ export function updateMessageStatusCache(queryClient, conversationId, messageId,
     };
   });
 }
+
+export function updateMessageMediaCache(queryClient, conversationId, payload = {}) {
+  const targetMessageId = String(payload.messageId || payload.message_id || '').trim();
+  const targetMediaId = String(payload.mediaId || payload.media_id || '').trim();
+  if (!targetMessageId && !targetMediaId) return;
+  queryClient.setQueryData(['chat', 'messages', String(conversationId || '')], (data) => {
+    if (!data || !Array.isArray(data.pages)) return data;
+    return {
+      ...data,
+      pages: data.pages.map((page) => ({
+        ...page,
+        items: (Array.isArray(page?.items) ? page.items : []).map((message) => {
+          const messageMatches = targetMessageId && getMessageId(message) === targetMessageId;
+          const mediaMatches = targetMediaId && (Array.isArray(message?.attachments) ? message.attachments : [])
+            .some((attachment) => String(attachment?.mediaId || attachment?.media_id || attachment?.id || '').trim() === targetMediaId);
+          if (!messageMatches && !mediaMatches) return message;
+          const attachments = (Array.isArray(message?.attachments) ? message.attachments : []).map((attachment) => {
+            const attachmentId = String(attachment?.mediaId || attachment?.media_id || attachment?.id || '').trim();
+            if (targetMediaId && attachmentId !== targetMediaId) return attachment;
+            return {
+              ...attachment,
+              status: payload.status || attachment.status,
+              mimeType: payload.mimeType || payload.mime_type || attachment.mimeType,
+              size: payload.size ?? attachment.size,
+              hasThumbnail: payload.hasThumbnail ?? payload.has_thumbnail ?? attachment.hasThumbnail,
+              transcription: payload.transcription || attachment.transcription,
+            };
+          });
+          return {
+            ...message,
+            attachments,
+            transcription: payload.transcription || message.transcription,
+          };
+        }),
+      })),
+    };
+  });
+}

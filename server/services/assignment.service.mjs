@@ -53,6 +53,34 @@ const publishPresence = ({ tenantId, userId, presence }) => publishRealtimeEvent
 
 const isAssignmentEnqueueEnabled = () => ['1', 'true', 'yes', 'on'].includes(String(process.env.ASSIGNMENT_ENQUEUE_ENABLED || '').trim().toLowerCase());
 const attendingUsersCache = new Map();
+const presenceStatusCache = new Map();
+const presenceStartCache = new Map();
+const presenceStartInFlight = new Map();
+const PRESENCE_STATUS_CACHE_MS = 3000;
+const PRESENCE_START_DEDUPE_MS = 5000;
+
+const presenceUserKey = ({ tenantId, userId }) => `${text(tenantId)}:${text(userId)}`;
+const presenceStartKey = ({ auth, sessionId = '' }) => `${presenceUserKey(auth)}:${text(sessionId) || 'default'}`;
+const clearPresenceReadCaches = ({ tenantId, userId }) => {
+  presenceStatusCache.delete(presenceUserKey({ tenantId, userId }));
+  const tenantPrefix = `${text(tenantId)}:`;
+  for (const key of attendingUsersCache.keys()) {
+    if (key.startsWith(tenantPrefix)) attendingUsersCache.delete(key);
+  }
+};
+const clearPresenceStartCache = ({ tenantId, userId }) => {
+  const userPrefix = `${presenceUserKey({ tenantId, userId })}:`;
+  for (const key of presenceStartCache.keys()) {
+    if (key.startsWith(userPrefix)) presenceStartCache.delete(key);
+  }
+};
+
+export const clearPresenceCaches = () => {
+  attendingUsersCache.clear();
+  presenceStatusCache.clear();
+  presenceStartCache.clear();
+  presenceStartInFlight.clear();
+};
 
 const enqueueAssignmentJob = async ({ tenantId, conversation, source, ignoreQueueAge = false }) => {
   const enabled = isAssignmentEnqueueEnabled();
@@ -210,7 +238,7 @@ export const unassignConversation = ({ auth, conversationId, targetQueueId, reas
 export const transferConversation = ({ auth, conversationId, targetUserId, targetQueueId, reason }) =>
   mutateAssignment({ auth, conversationId, targetUserId, targetQueueId, action: 'transfer', reason });
 
-export const startPresence = async ({ auth }) => {
+const startPresenceUncached = async ({ auth }) => {
   const queueIds = await syncQueueMemberships({ tenantId: auth.tenantId, userId: auth.userId, userName: userNameOf(auth), queueIds: auth.queueIds || [], isAssignable: !isPrivilegedChatUser(auth) });
   const current = await getAgentPresence({ tenantId: auth.tenantId, userId: auth.userId });
   const pauseActive = current?.status === 'paused' && Date.parse(String(current.paused_until || '')) > Date.now();
@@ -235,7 +263,27 @@ export const startPresence = async ({ auth }) => {
       source: 'presence_start',
     }).catch(() => {});
   }
+  clearPresenceReadCaches(auth);
   return { ok: true, presence: shaped, distributionPause: { active: pauseActive, pausedUntil: presence.paused_until, remainingMs: pauseActive ? Date.parse(presence.paused_until)-Date.now() : 0, reason: presence.pause_reason || '' } };
+};
+
+export const startPresence = async ({ auth, sessionId = '' }) => {
+  const key = presenceStartKey({ auth, sessionId });
+  for (const [candidateKey, candidate] of presenceStartCache) {
+    if (candidate.expiresAt <= Date.now()) presenceStartCache.delete(candidateKey);
+  }
+  const cached = presenceStartCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (presenceStartInFlight.has(key)) return presenceStartInFlight.get(key);
+
+  const pending = startPresenceUncached({ auth })
+    .then((value) => {
+      presenceStartCache.set(key, { expiresAt: Date.now() + PRESENCE_START_DEDUPE_MS, value });
+      return value;
+    })
+    .finally(() => presenceStartInFlight.delete(key));
+  presenceStartInFlight.set(key, pending);
+  return pending;
 };
 
 export const heartbeatPresence = async ({ auth }) => {
@@ -251,12 +299,24 @@ export const heartbeatPresence = async ({ auth }) => {
     pausedUntil: pauseActive ? current.paused_until : null,
     pauseReason: pauseActive ? current.pause_reason : null,
   });
-  return { ok: true, presence: shapePresence(presence) };
+  const shaped = shapePresence(presence);
+  presenceStatusCache.set(presenceUserKey(auth), {
+    expiresAt: Date.now() + PRESENCE_STATUS_CACHE_MS,
+    value: { ok: true, presence: shaped, distributionPause: {
+      active: pauseActive,
+      pausedUntil: pauseActive ? presence.paused_until : null,
+      remainingMs: pauseActive ? Math.max(0, Date.parse(presence.paused_until) - Date.now()) : 0,
+      reason: pauseActive ? presence.pause_reason || '' : '',
+    } },
+  });
+  return { ok: true, presence: shaped };
 };
 
 export const stopPresence = async ({ auth, recoverAssignments = true, reason = 'logout' }) => {
   const presence = await upsertAgentPresence({ tenantId: auth.tenantId, userId: auth.userId, userName: userNameOf(auth), userEmail: userEmailOf(auth), role: roleOf(auth), status: 'offline', pauseReason: reason });
   const shaped = shapePresence(presence);
+  clearPresenceReadCaches(auth);
+  clearPresenceStartCache(auth);
   const recoveredConversations = recoverAssignments ? await withTransaction(async (client) => {
     const result = await client.query(`
       WITH selected AS (
@@ -329,6 +389,8 @@ export const pausePresence = async ({ auth, reason = 'lunch', durationMinutes = 
   const pausedUntil = new Date(Date.now() + minutes * 60_000).toISOString();
   const presence = await upsertAgentPresence({ tenantId: auth.tenantId, userId: auth.userId, userName: userNameOf(auth), userEmail: userEmailOf(auth), role: roleOf(auth), status: 'paused', pausedUntil, pauseReason: reason });
   const shaped = shapePresence(presence);
+  clearPresenceReadCaches(auth);
+  clearPresenceStartCache(auth);
   await publishPresence({ tenantId: auth.tenantId, userId: auth.userId, presence: shaped });
   return { ok: true, presence: shaped, distributionPause: { active: true, pausedUntil, remainingMs: minutes * 60_000, reason } };
 };
@@ -337,6 +399,8 @@ export const resumePresence = async ({ auth }) => {
   const queueIds = await syncQueueMemberships({ tenantId: auth.tenantId, userId: auth.userId, userName: userNameOf(auth), queueIds: auth.queueIds || [], isAssignable: !isPrivilegedChatUser(auth) });
   const presence = await upsertAgentPresence({ tenantId: auth.tenantId, userId: auth.userId, userName: userNameOf(auth), userEmail: userEmailOf(auth), role: roleOf(auth), status: 'online' });
   const shaped = shapePresence({ ...presence, queue_ids: queueIds });
+  clearPresenceReadCaches(auth);
+  clearPresenceStartCache(auth);
   await publishPresence({ tenantId: auth.tenantId, userId: auth.userId, presence: shaped });
   if (!isPrivilegedChatUser(auth)) {
     void enqueuePendingAssignmentsForQueues({
@@ -348,10 +412,15 @@ export const resumePresence = async ({ auth }) => {
   return { ok: true, presence: shaped, distributionPause: { active: false, remainingMs: 0 } };
 };
 export const getPresenceStatus = async ({ auth }) => {
+  const cacheKey = presenceUserKey(auth);
+  const cached = presenceStatusCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
   const row = await getAgentPresence({ tenantId: auth.tenantId, userId: auth.userId });
   const pausedUntilMs = Date.parse(String(row?.paused_until || ''));
   const active = row?.status === 'paused' && Number.isFinite(pausedUntilMs) && pausedUntilMs > Date.now();
-  return { ok: true, presence: row ? shapePresence(row) : null, distributionPause: { active, pausedUntil: row?.paused_until || null, remainingMs: active ? pausedUntilMs - Date.now() : 0, reason: row?.pause_reason || '' } };
+  const value = { ok: true, presence: row ? shapePresence(row) : null, distributionPause: { active, pausedUntil: row?.paused_until || null, remainingMs: active ? pausedUntilMs - Date.now() : 0, reason: row?.pause_reason || '' } };
+  presenceStatusCache.set(cacheKey, { expiresAt: Date.now() + PRESENCE_STATUS_CACHE_MS, value });
+  return value;
 };
 export const getAttendingUsers = async ({ auth }) => {
   const ttlSeconds = Math.max(30, Number(process.env.ASSIGNMENT_PRESENCE_TTL_SECONDS || 90));

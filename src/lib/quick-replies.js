@@ -175,7 +175,7 @@ const requestLocalEntity = async (entityName, { method = 'GET', id = '', body, s
 export const listQuickReplies = async (options = {}) => {
   const searchParams = {
     sortBy: 'title',
-    limit: options.limit || 100,
+    limit: options.limit || 50,
   };
   if (options.includeActions) searchParams.include = 'actions';
   if (options.search) searchParams.search = options.search;

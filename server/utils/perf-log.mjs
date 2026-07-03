@@ -1,4 +1,11 @@
+import { monitorEventLoopDelay } from 'node:perf_hooks';
+
 const DEFAULT_THRESHOLD_MS = 750;
+
+const eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
+eventLoopDelay.enable();
+const eventLoopResetTimer = setInterval(() => eventLoopDelay.reset(), 10_000);
+eventLoopResetTimer.unref?.();
 
 export const parsePositiveInt = (value, fallback = DEFAULT_THRESHOLD_MS) => {
   const parsed = Number.parseInt(String(value || ''), 10);
@@ -16,6 +23,7 @@ export const finishPerfMeasure = (measure = startPerfMeasure()) => {
   const durationMs = Math.max(0, nowMs() - Number(measure.at || 0));
   const cpu = process.cpuUsage(measure.cpu);
   const memory = process.memoryUsage();
+  const eventLoopDelayNs = Number(eventLoopDelay.max || 0);
 
   return {
     durationMs,
@@ -23,6 +31,9 @@ export const finishPerfMeasure = (measure = startPerfMeasure()) => {
     cpuSystemMs: Math.round(cpu.system / 1000),
     rssMb: Math.round(memory.rss / 1024 / 1024),
     heapUsedMb: Math.round(memory.heapUsed / 1024 / 1024),
+    eventLoopDelayMs: Number.isFinite(eventLoopDelayNs)
+      ? Math.round((eventLoopDelayNs / 1_000_000) * 100) / 100
+      : 0,
   };
 };
 

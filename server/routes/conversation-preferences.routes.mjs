@@ -1,3 +1,16 @@
+let preferenceIndexCache = null;
+
+const getPreferenceIndex = (items = []) => {
+  if (preferenceIndexCache?.items === items) return preferenceIndexCache.byConversationId;
+  const byConversationId = new Map();
+  for (const item of items) {
+    const conversationId = String(item?.conversation_id || item?.conversationId || item?.id || '').trim();
+    if (conversationId) byConversationId.set(conversationId, item);
+  }
+  preferenceIndexCache = { items, byConversationId };
+  return byConversationId;
+};
+
 export const handleConversationPreferenceReadRoutes = async (req, res, url, deps = {}) => {
   if (req?.method !== 'GET' || url?.pathname !== '/api/local/conversation-preferences') return false;
   const { readStore, sendJson } = deps;
@@ -20,8 +33,9 @@ export const handleConversationPreferenceReadRoutes = async (req, res, url, deps
 
   const allowedIds = new Set(ids);
   const store = await readStore();
-  const items = (Array.isArray(store.conversationPreferences) ? store.conversationPreferences : [])
-    .filter((item) => allowedIds.has(String(item?.conversation_id || item?.conversationId || item?.id || '').trim()));
+  const sourceItems = Array.isArray(store.conversationPreferences) ? store.conversationPreferences : [];
+  const index = getPreferenceIndex(sourceItems);
+  const items = [...allowedIds].map((id) => index.get(id)).filter(Boolean);
   sendJson(res, 200, items, { 'Cache-Control': 'private, max-age=5' });
   return true;
 };

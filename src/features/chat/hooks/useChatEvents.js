@@ -10,6 +10,7 @@ import {
   appendMessageCache,
   markConversationReadCaches,
   updateConversationCaches,
+  updateMessageMediaCache,
   updateMessageStatusCache,
 } from '../cache-updaters';
 import { useChatStore } from '../store/useChatStore';
@@ -145,7 +146,7 @@ export function useChatEvents({ selectedConversationId = '' } = {}) {
 
         if (eventName === 'media_updated') {
           if (conversationId) {
-            void queryClient.invalidateQueries({ queryKey: ['chat', 'messages', conversationId] });
+            updateMessageMediaCache(queryClient, conversationId, payload);
           }
           dispatchLocalRealtimeEvent('conversation:media-updated', { ...payload, conversationId });
           return;

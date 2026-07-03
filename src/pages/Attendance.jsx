@@ -51,7 +51,6 @@ import { fetchLocalUsers } from '@/lib/users-api';
 import { isAdminLikeUser } from '@/lib/navigation-permissions';
 import { fetchWhatsappConversationDetail } from '@/lib/whatsapp-api';
 import { useConversationSummaries, useConversations } from '@/features/chat/hooks/useConversations';
-import { useChatEvents } from '@/features/chat/hooks/useChatEvents';
 import { useChatStore } from '@/features/chat/store/useChatStore';
 
 const getPreferenceTime = (value) => Date.parse(String(value || '')) || 0;
@@ -176,15 +175,13 @@ export default function Attendance() {
   const activeConversationsQuery = ENABLE_NEW_CHAT_DATA_LAYER ? paginatedConversationsQuery : legacyConversationsQuery;
   const { isLoading, isFetched, isError, error } = activeConversationsQuery;
 
-  useChatEvents({ selectedConversationId: selectedConversation?.id });
-
   const selectedCustomerId = String(
     selectedConversation?.customer_summary?.id || selectedConversation?.customer?.id || '',
   ).trim();
   const { data: selectedCustomerDetail } = useQuery({
     queryKey: ['customer-detail', selectedCustomerId],
     queryFn: () => fetchPersistedCustomerDetail(selectedCustomerId),
-    enabled: Boolean(selectedCustomerId),
+    enabled: Boolean(selectedCustomerId) && Boolean(showContactInfo || sidePanel === 'quick-replies'),
     staleTime: 60_000,
   });
 
@@ -384,7 +381,7 @@ export default function Attendance() {
 
     const startPresenceIfLeader = () => {
       if (!presenceLeadership.claim()) return;
-      void startAttendancePresence()
+      void startAttendancePresence({ sessionId: presenceLeadership.sessionId })
         .then((result) => {
           if (cancelled) return;
           applyPresenceResult(result);

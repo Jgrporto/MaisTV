@@ -40,7 +40,7 @@
     "chatbot:dry-run": "node scripts/chatbot-dry-run.mjs",
     "chatbot:sequence:test": "node --test server/services/chatbot-sequencing.test.mjs",
     "channels:test": "node --test server/services/unified-channel-model.test.mjs server/routes/body-parser-scope.test.mjs",
-    "attendance:performance:test": "node --test server/services/customer-summary.service.test.mjs server/routes/performance-read-routes.test.mjs",
+    "attendance:performance:test": "node --test server/services/customer-summary.service.test.mjs server/routes/performance-read-routes.test.mjs server/middlewares/slow-route-logger.test.mjs",
     "chatbot:sequence:report": "node scripts/chatbot-sequence-report.mjs",
     "assignment:route:configure": "node scripts/configure-assignment-route.mjs",
     "assignment:report": "node scripts/assignment-report.mjs",

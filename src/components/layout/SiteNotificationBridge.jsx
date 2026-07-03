@@ -23,6 +23,8 @@ import {
 } from '@/lib/performance-config';
 import { scheduleQueryInvalidation } from '@/lib/query-invalidation';
 import { useConversations } from '@/features/chat/hooks/useConversations';
+import { useChatEvents } from '@/features/chat/hooks/useChatEvents';
+import { useChatStore } from '@/features/chat/store/useChatStore';
 import { useAuth } from '@/lib/AuthContext';
 import {
   DEFAULT_NOTIFICATION_SETTINGS,
@@ -74,6 +76,9 @@ export default function SiteNotificationBridge() {
   const chatbotQueueRef = useRef([]);
   const chatbotActiveCountRef = useRef(0);
   const chatbotInvalidationTimerRef = useRef(null);
+  const selectedConversationId = useChatStore((state) => state.selectedConversation?.id || '');
+
+  useChatEvents({ selectedConversationId });
 
   const conversationsQuery = useConversations({
     limit: CONVERSATION_SUMMARY_LIMIT,
@@ -172,7 +177,6 @@ export default function SiteNotificationBridge() {
             chatbotInvalidationTimerRef.current = window.setTimeout(() => {
               void queryClient.invalidateQueries({ queryKey: ['labels'] });
               void queryClient.invalidateQueries({ queryKey: ['conversation-preferences'] });
-              void queryClient.invalidateQueries({ queryKey: ['conversations'] });
               void queryClient.invalidateQueries({ queryKey: ['chatbot-runtime-state'] });
             }, 500);
           })
@@ -365,7 +369,6 @@ export default function SiteNotificationBridge() {
     const previousSuccessfulSyncAt = previousSuccessfulCustomerSyncRef.current;
     if (nextSuccessfulSyncAt && previousSuccessfulSyncAt && nextSuccessfulSyncAt !== previousSuccessfulSyncAt) {
       void queryClient.invalidateQueries({ queryKey: ['persisted-customers'] });
-      void queryClient.invalidateQueries({ queryKey: ['conversations'] });
     }
     previousSuccessfulCustomerSyncRef.current = nextSuccessfulSyncAt;
   }, [customerSyncState?.lastSuccessfulSyncAt, queryClient]);

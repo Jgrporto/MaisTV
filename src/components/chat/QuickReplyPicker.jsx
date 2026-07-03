@@ -1,27 +1,26 @@
-import React from 'react';
+import React, { useDeferredValue } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Zap } from 'lucide-react';
 import { listQuickReplyCategories } from '@/lib/quick-reply-categories';
 import { getQuickReplyPreviewText, listQuickReplies } from '@/lib/quick-replies';
 
 export default function QuickReplyPicker({ filter, onSelect }) {
+  const deferredFilter = useDeferredValue(String(filter || '').trim());
   const { data: replies = [] } = useQuery({
-    queryKey: ['quick-replies'],
-    queryFn: () => listQuickReplies(),
+    queryKey: ['quick-replies', 'picker', deferredFilter],
+    queryFn: () => listQuickReplies({ limit: 50, search: deferredFilter }),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
   const { data: categories = [] } = useQuery({
     queryKey: ['quick-reply-categories'],
     queryFn: () => listQuickReplyCategories(),
+    staleTime: 300_000,
+    refetchOnWindowFocus: false,
   });
   const visibleCategoryIds = new Set(categories.filter((category) => category.visibleInQuickReplies !== false).map((category) => category.id));
 
-  const filtered = replies.filter(r =>
-    (!r.categoryId || visibleCategoryIds.has(r.categoryId)) &&
-    (!filter ||
-      r.title?.toLowerCase().includes(filter.toLowerCase()) ||
-      r.shortcut?.toLowerCase().includes(filter.toLowerCase()) ||
-      getQuickReplyPreviewText(r).toLowerCase().includes(filter.toLowerCase()))
-  );
+  const filtered = replies.filter(r => !r.categoryId || visibleCategoryIds.has(r.categoryId));
 
   if (filtered.length === 0) return null;
 

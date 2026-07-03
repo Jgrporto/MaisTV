@@ -696,6 +696,7 @@ const LOGIN_FAILURE_LOCK_MAX_MS = 15 * 60 * 1000;
 let storeWriteQueue = Promise.resolve();
 let customerSyncRunning = false;
 let storeCache = null;
+let customerSummaryStoreCache = null;
 const chatbotProcessCache = new Map();
 const chatbotProcessInFlight = new Map();
 let chatbotBackendRuntimeRunning = false;
@@ -3460,6 +3461,41 @@ const seedStore = () => {
 
 const cloneStoreSnapshot = (store) => structuredClone(normalizeStore(store));
 
+const projectCustomerForSummary = (customer = {}) => ({
+  id: customer.id,
+  display_name: customer.display_name,
+  name: customer.name,
+  username: customer.username,
+  phone_digits: customer.phone_digits,
+  whatsapp: customer.whatsapp,
+  status: customer.status,
+  status_label: customer.status_label,
+  statusLabel: customer.statusLabel,
+  expires_at: customer.expires_at,
+  expiresAt: customer.expiresAt,
+  package: customer.package,
+  planName: customer.planName,
+  plan: customer.plan,
+  connections: customer.connections,
+  is_trial: customer.is_trial,
+  isTest: customer.isTest,
+  synced_at: customer.synced_at,
+  updated_at: customer.updated_at,
+});
+
+const refreshCustomerSummaryStoreCache = (store = {}) => {
+  customerSummaryStoreCache = {
+    customers: (Array.isArray(store.customers) ? store.customers : []).map(projectCustomerForSummary),
+  };
+  return customerSummaryStoreCache;
+};
+
+const getCustomerSummaryStore = async () => {
+  if (customerSummaryStoreCache) return customerSummaryStoreCache;
+  await ensureStore();
+  return refreshCustomerSummaryStoreCache(storeCache);
+};
+
 const readStoreFromBackingStore = async ({ refreshSqlCache = false } = {}) => {
   await fs.mkdir(DATA_DIR, { recursive: true });
   if (refreshSqlCache) {
@@ -3484,6 +3520,7 @@ const readStoreFromBackingStore = async ({ refreshSqlCache = false } = {}) => {
 const ensureStore = async () => {
   if (!storeCache) {
     storeCache = await readStoreFromBackingStore();
+    refreshCustomerSummaryStoreCache(storeCache);
   }
 };
 
@@ -3516,6 +3553,7 @@ const writeStore = async (store) => {
   try {
     await writeJsonBackedStore(STORE_PATH, nextStore, writeToJsonFile);
     storeCache = nextStore;
+    refreshCustomerSummaryStoreCache(nextStore);
     return nextStore;
   } finally {
     const perf = finishPerfMeasure(measure);
@@ -4290,6 +4328,7 @@ const updateStore = async (mutate) => {
   const operation = storeWriteQueue.then(async () => {
     const current = await readStoreFromBackingStore({ refreshSqlCache: true });
     storeCache = current;
+    refreshCustomerSummaryStoreCache(current);
     const workingCopy = cloneStoreSnapshot(current);
     const mutationResult = await mutate(workingCopy);
     if (mutationResult === false) {
@@ -4306,7 +4345,12 @@ const updateStore = async (mutate) => {
 const sendJson = (res, statusCode, payload, headers = {}) => {
   const requestOrigin = res.req?.headers?.origin;
   const allowOrigin = requestOrigin || '*';
+  const serializeStartedAt = nowMs();
   const jsonText = JSON.stringify(payload);
+  res.perfTimings = {
+    ...(res.perfTimings || {}),
+    serializeMs: Math.max(0, nowMs() - serializeStartedAt),
+  };
   if (Buffer.byteLength(jsonText, 'utf8') > 1024 * 1024) {
     console.warn(
       `[local-api] large_json_response method=${res.req?.method || ''} path=${res.req?.url || ''} bytes=${Buffer.byteLength(jsonText, 'utf8')}`,
@@ -4318,7 +4362,7 @@ const sendJson = (res, statusCode, payload, headers = {}) => {
     'Access-Control-Allow-Origin': allowOrigin,
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Request-Id, X-Presence-Session-Id',
     Vary: 'Origin',
     ...headers,
   });
@@ -4334,7 +4378,7 @@ const sendJsonText = (res, statusCode, jsonText, headers = {}) => {
     'Access-Control-Allow-Origin': allowOrigin,
     'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Request-Id, X-Presence-Session-Id',
     Vary: 'Origin',
     ...headers,
   });
@@ -4426,7 +4470,7 @@ const applyEntityFilters = (items, filters = {}) => {
 const getEntityListLimit = (entityName, limitRaw) => {
   const requested = parsePositiveInteger(limitRaw, 0);
   const defaults = {
-    QuickReply: 100,
+    QuickReply: 50,
     QuickReplySchedule: 50,
   };
   const max = {
@@ -5416,9 +5460,12 @@ const getChatArchitectureApp = () => {
       app.disable('x-powered-by');
       await registerChatArchitecture(app, {
         resolveSession: resolveChatArchitectureSession,
-        customerSummaryProvider: async (conversations) => {
+        customerSummaryProvider: async (conversations, { perfTimings } = {}) => {
           try {
-            return enrichConversationsWithCustomerSummaries(conversations, await readStore());
+            const storeStartedAt = nowMs();
+            const summaryStore = await getCustomerSummaryStore();
+            if (perfTimings) perfTimings.storeMs = Number(perfTimings.storeMs || 0) + Math.max(0, nowMs() - storeStartedAt);
+            return enrichConversationsWithCustomerSummaries(conversations, summaryStore);
           } catch (error) {
             console.warn(`[local-api] customer_summary_unavailable error=${error?.message || error}`);
             return conversations.map((conversation) => ({ ...conversation, customer_summary: null }));
