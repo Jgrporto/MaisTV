@@ -49,7 +49,6 @@ import {
 } from '@/lib/performance-config';
 import { fetchLocalUsers } from '@/lib/users-api';
 import { isAdminLikeUser } from '@/lib/navigation-permissions';
-import { fetchWhatsappConversationDetail } from '@/lib/whatsapp-api';
 import { useConversationSummaries, useConversations } from '@/features/chat/hooks/useConversations';
 import { useChatStore } from '@/features/chat/store/useChatStore';
 
@@ -108,24 +107,6 @@ const isConversationAssignedToUser = (conversation, user) => {
   return assignedIds.some((assignedId) => userIds.includes(assignedId));
 };
 
-const mergeConversationDetail = (currentConversation, detailConversation) => {
-  if (!detailConversation) return currentConversation;
-  return {
-    ...detailConversation,
-    ...currentConversation,
-    source_conversation_ids:
-      Array.isArray(detailConversation.source_conversation_ids) && detailConversation.source_conversation_ids.length > 0
-        ? detailConversation.source_conversation_ids
-        : currentConversation.source_conversation_ids,
-    source_accounts:
-      Array.isArray(detailConversation.source_accounts) && detailConversation.source_accounts.length > 0
-        ? detailConversation.source_accounts
-        : currentConversation.source_accounts,
-    active_route_selector: detailConversation.active_route_selector || currentConversation.active_route_selector,
-    default_route_selector: detailConversation.default_route_selector || currentConversation.default_route_selector,
-  };
-};
-
 export default function Attendance() {
   const { effectiveUser } = useAuth();
   const queryClient = useQueryClient();
@@ -157,6 +138,7 @@ export default function Attendance() {
   const [distributionPauseUntil, setDistributionPauseUntil] = useState('');
   const [distributionPauseReasonLabel, setDistributionPauseReasonLabel] = useState('');
   const [distributionPauseTick, setDistributionPauseTick] = useState(Date.now());
+  const [backgroundQueryReady, setBackgroundQueryReady] = useState(false);
   const { customLabels, assignments, stageAssignments } = useLabelCatalog();
   const initialConversationTargetRef = React.useRef(null);
 
@@ -174,6 +156,32 @@ export default function Attendance() {
   }, [legacyConversationsQuery.data, paginatedConversationsQuery.data]);
   const activeConversationsQuery = ENABLE_NEW_CHAT_DATA_LAYER ? paginatedConversationsQuery : legacyConversationsQuery;
   const { isLoading, isFetched, isError, error } = activeConversationsQuery;
+
+  useEffect(() => {
+    if (!isFetched) {
+      setBackgroundQueryReady(false);
+      return undefined;
+    }
+
+    let active = true;
+    const activateBackgroundQueries = () => {
+      if (active) {
+        setBackgroundQueryReady(true);
+      }
+    };
+    const idleId = typeof window.requestIdleCallback === 'function'
+      ? window.requestIdleCallback(activateBackgroundQueries, { timeout: 1200 })
+      : window.setTimeout(activateBackgroundQueries, 400);
+
+    return () => {
+      active = false;
+      if (typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(idleId);
+      } else {
+        window.clearTimeout(idleId);
+      }
+    };
+  }, [isFetched]);
 
   const selectedCustomerId = String(
     selectedConversation?.customer_summary?.id || selectedConversation?.customer?.id || '',
@@ -220,14 +228,21 @@ export default function Attendance() {
   ]);
 
   const visibleConversationIds = useMemo(
-    () => networkConversations.map((conversation) => String(conversation?.id || '').trim()).filter(Boolean),
+    () => Array.from(
+      new Set(
+        networkConversations
+          .map((conversation) => String(conversation?.id || '').trim())
+          .filter(Boolean),
+      ),
+    ).sort(),
     [networkConversations],
   );
   const { data: conversationPreferences = [] } = useQuery({
-    queryKey: ['conversation-preferences', visibleConversationIds],
+    queryKey: ['conversation-preferences', 'attendance', visibleConversationIds],
     queryFn: () => fetchConversationPreferences(visibleConversationIds),
     enabled: visibleConversationIds.length > 0,
-    staleTime: 5000,
+    staleTime: 30000,
+    refetchOnWindowFocus: false,
   });
 
   const { data: services = [] } = useQuery({
@@ -249,24 +264,26 @@ export default function Attendance() {
   const { data: activeAttendanceUsers = [] } = useQuery({
     queryKey: ['presence', 'attending-users'],
     queryFn: fetchActiveAttendanceUsers,
-    staleTime: 10000,
-    refetchInterval: sseStatus === 'connected' ? false : PRESENCE_REFRESH_INTERVAL_MS,
-    refetchOnWindowFocus: sseStatus !== 'connected',
+    enabled: backgroundQueryReady,
+    staleTime: 15000,
+    refetchInterval: backgroundQueryReady && sseStatus === 'connected' ? false : PRESENCE_REFRESH_INTERVAL_MS,
+    refetchOnWindowFocus: backgroundQueryReady && sseStatus !== 'connected',
   });
 
   const { data: presenceStatus } = useQuery({
     queryKey: ['presence', 'status', effectiveUser?.id],
     queryFn: fetchAttendancePresenceStatus,
-    staleTime: 10000,
-    enabled: Boolean(effectiveUser?.id),
-    refetchOnWindowFocus: sseStatus !== 'connected',
+    staleTime: 15000,
+    enabled: Boolean(effectiveUser?.id) && backgroundQueryReady,
+    refetchOnWindowFocus: backgroundQueryReady && sseStatus !== 'connected',
   });
 
   const { data: chatbotRuntimeState } = useQuery({
     queryKey: ['chatbot-runtime-state'],
     queryFn: fetchChatbotRuntimeState,
+    enabled: backgroundQueryReady,
     staleTime: 10000,
-    refetchInterval: CHATBOT_RUNTIME_REFRESH_INTERVAL_MS,
+    refetchInterval: backgroundQueryReady ? CHATBOT_RUNTIME_REFRESH_INTERVAL_MS : false,
   });
 
   useEffect(() => {
@@ -416,8 +433,6 @@ export default function Attendance() {
             );
             return dedupeConversationPreferences([preference, ...itemsWithoutDuplicates]);
           });
-
-          void queryClient.invalidateQueries({ queryKey: ['conversation-preferences'] });
         } catch {
           // Evento invalido nao deve derrubar a tela de atendimento.
         }
@@ -673,31 +688,6 @@ export default function Attendance() {
   const handleSelectConversation = (conv) => {
     setSelectedConversation(conv);
     setShowContactInfo(false);
-
-    const selectedId = String(conv?.id || '').trim();
-    if (selectedId) {
-      void fetchWhatsappConversationDetail(conv)
-        .then((detailConversation) => {
-          if (!detailConversation) return;
-          setSelectedConversation((currentConversation) => {
-            if (String(currentConversation?.id || '').trim() !== selectedId) {
-              return currentConversation;
-            }
-            return mergeConversationDetail(currentConversation, detailConversation);
-          });
-          queryClient.setQueriesData({ queryKey: ['conversations'] }, (currentData) => {
-            if (!Array.isArray(currentData)) return currentData;
-            return currentData.map((conversation) =>
-              String(conversation?.id || '').trim() === selectedId
-                ? mergeConversationDetail(conversation, detailConversation)
-                : conversation
-            );
-          });
-        })
-        .catch(() => {
-          // A lista resumida ja tem dados suficientes para operar; detalhe falho nao deve travar o atendimento.
-        });
-    }
 
     if (!conv?.manual_unread) {
       return;

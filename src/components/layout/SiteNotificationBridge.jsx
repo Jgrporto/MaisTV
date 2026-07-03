@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import {
@@ -61,8 +62,10 @@ const isConversationAssignedToUser = (conversation, user) => {
 
 export default function SiteNotificationBridge() {
   const queryClient = useQueryClient();
+  const location = useLocation();
   const { effectiveUser } = useAuth();
   const [notificationSettings, setNotificationSettings] = useState(DEFAULT_NOTIFICATION_SETTINGS);
+  const [deferredBridgeReady, setDeferredBridgeReady] = useState(false);
   const previousUnreadSnapshotRef = useRef(null);
   const previousCustomerSyncStatusRef = useRef(null);
   const previousSuccessfulCustomerSyncRef = useRef('');
@@ -77,12 +80,40 @@ export default function SiteNotificationBridge() {
   const chatbotActiveCountRef = useRef(0);
   const chatbotInvalidationTimerRef = useRef(null);
   const selectedConversationId = useChatStore((state) => state.selectedConversation?.id || '');
+  const isAttendanceRoute = location.pathname === '/';
 
   useChatEvents({ selectedConversationId });
 
+  useEffect(() => {
+    if (!isAttendanceRoute) {
+      setDeferredBridgeReady(true);
+      return undefined;
+    }
+
+    let active = true;
+    setDeferredBridgeReady(false);
+    const activateDeferredBridge = () => {
+      if (active) {
+        setDeferredBridgeReady(true);
+      }
+    };
+    const idleId = typeof window.requestIdleCallback === 'function'
+      ? window.requestIdleCallback(activateDeferredBridge, { timeout: 3000 })
+      : window.setTimeout(activateDeferredBridge, 1500);
+
+    return () => {
+      active = false;
+      if (typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(idleId);
+      } else {
+        window.clearTimeout(idleId);
+      }
+    };
+  }, [isAttendanceRoute]);
+
   const conversationsQuery = useConversations({
     limit: CONVERSATION_SUMMARY_LIMIT,
-    enabled: notificationSettings.alertNewConversations,
+    enabled: notificationSettings.alertNewConversations && !isAttendanceRoute,
   });
   const rawConversations = useMemo(
     () => (conversationsQuery.data?.pages || []).flatMap((page) => page?.items || []),
@@ -92,8 +123,11 @@ export default function SiteNotificationBridge() {
   const { data: customerSyncState } = useQuery({
     queryKey: ['customer-sync-state'],
     queryFn: fetchCustomerSyncState,
+    enabled: customerBrowserSync.status === 'running' || deferredBridgeReady,
     staleTime: 10000,
-    refetchInterval: CUSTOMER_SYNC_STATE_REFRESH_INTERVAL_MS,
+    refetchInterval: customerBrowserSync.status === 'running' || deferredBridgeReady
+      ? CUSTOMER_SYNC_STATE_REFRESH_INTERVAL_MS
+      : false,
   });
 
   const { data: notificationSettingsData } = useQuery({
@@ -106,8 +140,9 @@ export default function SiteNotificationBridge() {
   const { data: chatbotRuntimeState } = useQuery({
     queryKey: ['chatbot-runtime-state'],
     queryFn: fetchChatbotRuntimeState,
+    enabled: !isAttendanceRoute,
     staleTime: 10000,
-    refetchInterval: CHATBOT_RUNTIME_REFRESH_INTERVAL_MS,
+    refetchInterval: !isAttendanceRoute ? CHATBOT_RUNTIME_REFRESH_INTERVAL_MS : false,
   });
 
   useEffect(() => subscribeToNotificationSettings(setNotificationSettings), []);
@@ -115,10 +150,6 @@ export default function SiteNotificationBridge() {
   useEffect(
     () =>
       subscribeToLocalEvents((event) => {
-        if (event.type === 'conversation:preference-updated') {
-          scheduleQueryInvalidation(queryClient, { queryKey: ['conversation-preferences'] });
-        }
-
         if (
           event.type === 'presence:distribution-paused' ||
           event.type === 'presence:distribution-resumed'
@@ -176,7 +207,9 @@ export default function SiteNotificationBridge() {
             }
             chatbotInvalidationTimerRef.current = window.setTimeout(() => {
               void queryClient.invalidateQueries({ queryKey: ['labels'] });
-              void queryClient.invalidateQueries({ queryKey: ['conversation-preferences'] });
+              if (!isAttendanceRoute) {
+                void queryClient.invalidateQueries({ queryKey: ['conversation-preferences'] });
+              }
               void queryClient.invalidateQueries({ queryKey: ['chatbot-runtime-state'] });
             }, 500);
           })
@@ -280,7 +313,7 @@ export default function SiteNotificationBridge() {
     }
 
     return undefined;
-  }, [chatbotRuntimeState, conversations, queryClient]);
+  }, [chatbotRuntimeState, conversations, isAttendanceRoute, queryClient]);
 
   useEffect(() => {
     const unlockAudio = () => {

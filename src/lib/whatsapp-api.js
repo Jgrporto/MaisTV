@@ -856,6 +856,7 @@ export const markChatConversationRead = async (conversationId, options = {}) => 
 };
 
 const chatMediaUrlCache = new Map();
+const chatMediaUrlInFlightCache = new Map();
 
 export const fetchChatMediaUrl = async (mediaId, variant = 'thumbnail') => {
   const safeMediaId = String(mediaId || '').trim();
@@ -863,14 +864,23 @@ export const fetchChatMediaUrl = async (mediaId, variant = 'thumbnail') => {
   const cacheKey = `${safeMediaId}:${variant}`;
   const cached = chatMediaUrlCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.url;
+  const inFlight = chatMediaUrlInFlightCache.get(cacheKey);
+  if (inFlight) return await inFlight;
   const suffix = variant === 'original' ? 'signed-url' : 'thumbnail';
-  const data = await requestChatJson(`/api/media/${encodeURIComponent(safeMediaId)}/${suffix}`, { method: 'GET' });
-  const url = data?.url || data?.signedUrl || data?.signed_url || null;
-  if (url) {
-    const ttlSeconds = Math.max(30, Number(data?.expiresIn || data?.expires_in || 300));
-    chatMediaUrlCache.set(cacheKey, { url, expiresAt: Date.now() + Math.max(15, ttlSeconds - 15) * 1000 });
-  }
-  return url;
+  const fetchPromise = requestChatJson(`/api/media/${encodeURIComponent(safeMediaId)}/${suffix}`, { method: 'GET' })
+    .then((data) => {
+      const url = data?.url || data?.signedUrl || data?.signed_url || null;
+      if (url) {
+        const ttlSeconds = Math.max(30, Number(data?.expiresIn || data?.expires_in || 300));
+        chatMediaUrlCache.set(cacheKey, { url, expiresAt: Date.now() + Math.max(15, ttlSeconds - 15) * 1000 });
+      }
+      return url;
+    })
+    .finally(() => {
+      chatMediaUrlInFlightCache.delete(cacheKey);
+    });
+  chatMediaUrlInFlightCache.set(cacheKey, fetchPromise);
+  return await fetchPromise;
 };
 
 export const fetchWhatsappConversationDetail = async (conversationOrId, options = {}) => {

@@ -91,6 +91,9 @@ const HIDDEN_TAB_MESSAGES_POLL_INTERVAL_MS = 300000;
 const OUTGOING_RECONCILE_WINDOW_MS = 2 * 60 * 1000;
 const MESSAGE_CACHE_LIMIT = 160;
 const VISIBLE_MESSAGE_DAY_LIMIT = 2;
+const CHATBOT_EVENTS_IDLE_TTL_MS = 60_000;
+
+const chatbotEventsPrefetchTimestamps = new Map();
 
 function getMessageTimestamp(message) {
   return new Date(message?.created_date || message?.timestamp || 0).getTime();
@@ -1504,10 +1507,17 @@ export default function ChatWindow({
     const runBackgroundDetails = () => {
       if (!active || activeConversationIdRef.current !== conversationId) return;
       setCheckoutStatusConversationId(conversationId);
+      const lastChatbotFetchAt = Number(chatbotEventsPrefetchTimestamps.get(conversationId) || 0);
+      if (Date.now() - lastChatbotFetchAt < CHATBOT_EVENTS_IDLE_TTL_MS) {
+        return;
+      }
+      chatbotEventsPrefetchTimestamps.set(conversationId, Date.now());
       void fetchChatbotEvents(conversationId).then((chatbotEvents) => {
         if (!active || activeConversationIdRef.current !== conversationId || !Array.isArray(chatbotEvents)) return;
         setMessages((currentMessages) => mergeMessages(currentMessages, chatbotEvents));
-      }).catch(() => {});
+      }).catch(() => {
+        chatbotEventsPrefetchTimestamps.delete(conversationId);
+      });
     };
     const idleId = typeof window.requestIdleCallback === 'function'
       ? window.requestIdleCallback(runBackgroundDetails, { timeout: 1500 })
@@ -1775,20 +1785,14 @@ export default function ChatWindow({
     }
   };
 
-  const loadOlderMessages = async ({ fallbackToHistory = false } = {}) => {
+  const loadOlderMessages = async () => {
     if (!conversation?.id || isLoadingOlder || !hasOlderMessages || messages.length === 0) {
-      if (fallbackToHistory && !hasOlderMessages) {
-        await loadHistoryMessages();
-      }
       return;
     }
 
     const oldestTimestamp = messages[0]?.created_date || messages[0]?.timestamp;
     if (!oldestTimestamp) {
       setHasOlderMessages(false);
-      if (fallbackToHistory) {
-        await loadHistoryMessages();
-      }
       return;
     }
 
@@ -1821,9 +1825,6 @@ export default function ChatWindow({
 
       if (olderMessages.length === 0) {
         setHasOlderMessages(false);
-        if (fallbackToHistory) {
-          await loadHistoryMessages();
-        }
         return;
       }
 
@@ -1846,11 +1847,17 @@ export default function ChatWindow({
   const handleLoadMoreMessages = async () => {
     if (isLoadingOlder || isLoadingHistory) return;
     if (hasOlderMessages) {
-      await loadOlderMessages({ fallbackToHistory: true });
+      await loadOlderMessages();
       return;
     }
     await loadHistoryMessages();
   };
+
+  const loadMoreButtonLabel = isLoadingOlder || isLoadingHistory
+    ? 'Carregando historico...'
+    : hasOlderMessages
+      ? 'Ver mais mensagens'
+      : 'Carregar historico antigo';
 
   const appendOptimisticMessage = (optimisticMessage) => {
     setMessages((currentMessages) => mergeMessages(currentMessages, [optimisticMessage]));
@@ -3227,7 +3234,7 @@ export default function ChatWindow({
               items={grouped}
               renderItem={renderThreadItem}
               onLoadOlder={handleLoadMoreMessages}
-              hasOlderMessages={hasOlderMessages || hasHistoryMessages}
+              hasOlderMessages={hasOlderMessages}
               isLoadingOlder={isLoadingOlder || isLoadingHistory}
               scrollerRef={setScrollContainerElement}
               stickToBottomRef={stickToBottomRef}
@@ -3244,7 +3251,7 @@ export default function ChatWindow({
                     disabled={isLoadingOlder || isLoadingHistory}
                     className="text-[11px] text-muted-foreground bg-muted/80 px-3 py-1 rounded-full shadow-sm transition hover:bg-muted disabled:cursor-wait disabled:opacity-70"
                   >
-                    {isLoadingOlder || isLoadingHistory ? 'Carregando historico...' : 'Ver Mais'}
+                    {loadMoreButtonLabel}
                   </button>
                 </div>
               ) : null}
@@ -3276,7 +3283,7 @@ export default function ChatWindow({
                 disabled={isLoadingOlder || isLoadingHistory}
                 className="text-[11px] text-muted-foreground bg-muted/80 px-3 py-1 rounded-full shadow-sm transition hover:bg-muted disabled:cursor-wait disabled:opacity-70"
               >
-                {isLoadingOlder || isLoadingHistory ? 'Carregando historico...' : 'Ver Mais'}
+                {loadMoreButtonLabel}
               </button>
             </div>
           )}
